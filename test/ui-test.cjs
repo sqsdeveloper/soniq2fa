@@ -40,9 +40,12 @@ function reset(over) {
       { name: "example.net", level: "off", fallback: true, adminMech: false, sms: false, smsGateway: "" }],
     sms: { file: "/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties", state: "ok", gateways: [
       { name: "default", configured: true, provider: "smsapi", from: "Example", countries: "+48", maxPerHour: "200",
-        url: "https://api.smsapi.pl/sms.do", tokenLength: 40, sentThisHour: 3, domains: ["example.com"] },
+        url: "https://api.smsapi.pl/sms.do", tokenLength: 40, headers: "", balance: true, sentThisHour: 3, domains: ["example.com"] },
       { name: "example.org", configured: true, provider: "smsapi", from: "ExampleOrg", countries: "+48,+420", maxPerHour: "50",
-        url: "https://api.smsapi.pl/sms.do", tokenLength: 40, sentThisHour: 0, domains: [] }] },
+        url: "https://api.smsapi.pl/sms.do", tokenLength: 40, headers: "", balance: true, sentThisHour: 0, domains: [] },
+      { name: "example.net", configured: true, provider: "http", from: "+15005550006", countries: "+48", maxPerHour: "100",
+        url: "https://api.example.com/2010-04-01/Accounts/AC1/Messages.json", tokenLength: 0, headers: "Authorization, Content-Type",
+        balance: false, sentThisHour: 0, domains: [] }] },
     accounts: [
       { name: "anna.kowalska@example.com", displayName: "Anna Kowalska", status: "active", lastLogin: "2026-10-10", available: "yes", required: "inherit", offered: true, mustHave: false, enabled: true, devices: 3, backupLeft: 8, recovery: false },
       { name: "jan.nowak@example.com", displayName: "Jan Nowak", status: "active", lastLogin: "2026-10-08", available: "yes", required: "yes", offered: true, mustHave: true, enabled: false, devices: 0, backupLeft: 0, recovery: false },
@@ -503,14 +506,18 @@ async function adminPage(ctx, base) {
   await page.waitForFunction(() => document.querySelector("#msg.ok"));
   check(posts.some((x) => x.op === "domain" && x.domain === "example.net" && x.level === "available"), "admin: domain level saved");
   await page.waitForSelector("#gateways tr");
-  check((await page.locator("#gateways tr").count()) === 2 && (await page.textContent("#gateways")).includes("example.com"),
+  check((await page.locator("#gateways tr").count()) === 3 && (await page.textContent("#gateways")).includes("example.com"),
     "admin: SMS gateways listed with the domains using them");
+  const httpRow = await page.locator("#gateways tr").nth(2).textContent();
+  check(httpRow.includes("HTTP") && httpRow.includes("Authorization") && !httpRow.includes("c2VjcmV0")
+    && (await page.locator("#gateways tr").nth(2).locator("button").count()) === 1,
+    "admin: HTTP gateway shows header names only, no balance button without balance.url");
   await page.locator("#domains tr").nth(1).locator("input[type=checkbox]").check();
   await page.waitForFunction(() => document.querySelector("#msg.ok"));
   check(posts.some((x) => x.op === "domain-sms" && x.domain === "example.org" && x.on === "true"), "admin: codes by SMS turned on for a domain");
   const gw = page.locator("#gateways tr").first();
   await gw.locator("button").first().click();
-  await page.waitForFunction(() => document.querySelector("#gateways .sub").textContent.includes("86.29"));
+  await page.waitForFunction(() => document.querySelector("#gateways .out").textContent.includes("86.29"));
   await gw.locator("input[type=tel]").fill("+48600111222");
   await gw.locator("button").nth(1).click();
   await page.waitForFunction(() => document.querySelector("#msg.ok") && document.querySelector("#msg").textContent.includes("***"));

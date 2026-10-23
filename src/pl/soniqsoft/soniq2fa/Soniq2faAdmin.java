@@ -30,7 +30,7 @@ import javax.servlet.http.HttpServletResponse;
  * POST op=recovery account, on (true | false) - zimbraFeatureResetPasswordStatus; turning it on for an account with 2FA
  *                  weakens it (the page asks first), and every login of that account logs an error
  * POST op=domain-sms domain, on (true | false) - the flag "sms" of the domain's mechanism (codes by SMS allowed)
- * POST op=sms-points gateway - points left on its SMSAPI account
+ * POST op=sms-points gateway - points or balance left on its account (SMSAPI, or sms.http.balance.url)
  * POST op=sms-test gateway, phone - a test SMS, sent at once (at most one a minute per admin)
  *
  * POST needs the X-Soniq2fa header and a same-host Origin, as the user page. Every change is logged with the admin.
@@ -131,7 +131,7 @@ public final class Soniq2faAdmin extends ExtensionHttpHandler {
                     java.util.Properties g = gatewayByName(req.getParameter("gateway"));
                     String points;
                     try {
-                        points = Channels.smsapiPoints(g);
+                        points = Channels.balance(g);
                     } catch (java.io.IOException e) {
                         ZimbraLog.account.warn("soniq2fa: admin %s: points of SMS gateway '%s': %s", admin.getName(), g.getProperty("gateway.name"), e.getMessage());
                         throw new IllegalArgumentException("sms_gateway");
@@ -260,8 +260,10 @@ public final class Soniq2faAdmin extends ExtensionHttpHandler {
                     .append(",\"from\":").append(Soniq2faPage.q(g.getProperty("sms.from", "")))
                     .append(",\"countries\":").append(Soniq2faPage.q(g.getProperty("sms.countries", "+48")))
                     .append(",\"maxPerHour\":").append(Soniq2faPage.q(g.getProperty("sms.maxPerHour", "200")))
-                    .append(",\"url\":").append(Soniq2faPage.q(g.getProperty("sms.url", "https://api.smsapi.pl/sms.do")))
-                    .append(",\"tokenLength\":").append(g.getProperty("sms.token", "").trim().length())
+                    .append(",\"url\":").append(Soniq2faPage.q(Channels.publicUrl(g)))
+                    .append(",\"tokenLength\":").append(Channels.http(g) ? 0 : g.getProperty("sms.token", "").trim().length())
+                    .append(",\"headers\":").append(Soniq2faPage.q(String.join(", ", Channels.headerNames(g))))
+                    .append(",\"balance\":").append(Channels.hasBalance(g))
                     .append(",\"sentThisHour\":").append(Channels.sentThisHour(name, now))
                     .append(",\"domains\":[").append(ds).append("]}");
         }

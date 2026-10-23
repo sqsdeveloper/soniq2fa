@@ -474,6 +474,68 @@ domain.example.org.sms.from=ExampleOrg
 domain.example.net.sms.from=ExampleNet
 ```
 
+#### Other SMS gateways (any HTTP API)
+
+Instead of SMSAPI a gateway can be any service that sends an SMS with one HTTP request. Set `sms.provider=http` and
+describe the request; `{to}` (`+48600111222`), `{to_digits}` (`48600111222`), `{text}` and `{from}` are replaced in the
+address (URL-encoded) and in the body (encoded as `sms.http.encoding` says: `form`, `json` or `none`):
+
+| Key | Meaning |
+|---|---|
+| `sms.http.url` | address of the send call |
+| `sms.http.method` | `POST` (default) or `GET` |
+| `sms.http.header.<Name>` | a request header, e.g. `Authorization`, `Content-Type` (values are never shown on the page) |
+| `sms.http.body` | body template |
+| `sms.http.encoding` | `form` (default), `json`, `none` |
+| `sms.http.success.status` | accepted HTTP codes, default `200,201,202` |
+| `sms.http.success.match` | optional regular expression that must be found in the answer |
+| `sms.http.balance.url`, `sms.http.balance.match` | optional: balance for the administration page (group 1 of the expression) |
+
+Twilio ([Messages API](https://www.twilio.com/docs/messaging/api/message-resource#create-a-message-resource);
+`Authorization` is `Basic` with base64 of `AccountSID:AuthToken`):
+
+```properties
+sms.provider=http
+sms.from=+15005550006
+sms.http.url=https://api.twilio.com/2010-04-01/Accounts/<AccountSID>/Messages.json
+sms.http.header.Authorization=Basic <base64 of AccountSID:AuthToken>
+sms.http.header.Content-Type=application/x-www-form-urlencoded
+sms.http.body=To={to}&From={from}&Body={text}
+sms.http.success.status=201
+sms.http.success.match="status"\s*:\s*"(queued|accepted|sending|sent)"
+```
+
+Vonage SMS API (`https://rest.nexmo.com/sms/json`, basic auth with API key and secret; a sent message has status `"0"`):
+
+```properties
+sms.provider=http
+sms.from=Example
+sms.http.url=https://rest.nexmo.com/sms/json
+sms.http.header.Authorization=Basic <base64 of key:secret>
+sms.http.header.Content-Type=application/x-www-form-urlencoded
+sms.http.body=from={from}&to={to_digits}&text={text}
+sms.http.success.match="status"\s*:\s*"0"
+```
+
+A gateway with a JSON API and a bearer token (fictitious service):
+
+```properties
+sms.provider=http
+sms.http.url=https://api.example.com/v1/sms
+sms.http.header.Authorization=Bearer <token>
+sms.http.header.Content-Type=application/json
+sms.http.encoding=json
+sms.http.body={"to":"{to}","sender":"{from}","message":"{text}"}
+sms.http.success.match="ok"\s*:\s*true
+sms.http.balance.url=https://api.example.com/v1/balance
+sms.http.balance.match="balance"\s*:\s*([0-9.]+)
+```
+
+Check every new gateway with **Send test SMS** on the administration page before ticking SMS for a domain; a refusal
+is shown there and logged in `mailbox.log` (the answer without phone numbers). The same keys work per domain
+(`domain.<domain>.sms.provider=http`, …), so domains can use different providers. Gateways that do not speak HTTP
+(SMPP, GSM modems) need an HTTP bridge in front of them.
+
 The administration page shows every gateway read-only — state, sender, countries, messages this hour against the
 limit, whether the token is set (never the token), the domains using it — and can check the SMSAPI points and send a
 test SMS. The file is read at every send, so changes need no restart; without it the
@@ -548,7 +610,7 @@ The login pages send the same `AuthRequest` JSON; a change in how the server ans
   them, and mail goes out through the local MTA with the account itself as the sender.
 - Turning 2FA on sends no notification e-mail.
 - Codes by SMS and e-mail complement the app: an account turns them on after setting up 2FA with the app, and 2FA by SMS
-  alone is not offered. SMS goes through SMSAPI only; pending codes are kept in memory (a mailbox restart voids them).
+  alone is not offered. SMS goes through SMSAPI or any gateway with an HTTP API; pending codes are kept in memory (a mailbox restart voids them).
 - REST access with HTTP basic auth is not available to enrolled users.
 - Single-server installations only (see Requirements).
 - The TOTP secret is not encrypted in LDAP.
@@ -614,7 +676,8 @@ zmianie telefonu.
 - **Zgubiony telefon i kody zapasowe:** *Resetuj 2FA*, użytkownik konfiguruje je od nowa.
 - **Zapomniane hasło:** użytkownik z potwierdzonym adresem do odzyskiwania zmienia je sam (kod z maila i kod z
   aplikacji); pozostałym nowe hasło w konsoli admina albo `carbonio prov sp`; 2FA zostaje.
-- **Kody SMS:** bramka SMSAPI w `/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties` (root:zextras 0640), opis w
+- **Kody SMS:** bramka SMSAPI albo dowolna bramka HTTP (`sms.provider=http`, przykłady Twilio i Vonage w sekcji
+  *Other SMS gateways*) w `/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties` (root:zextras 0640), opis w
   sekcji *Codes by SMS and e-mail*. SMS włącza się **per domena** (pole *SMS* w tabeli domen); domena może mieć własną
   bramkę (`domain.<domena>.sms.*`), pozostałe korzystają z domyślnej. Sekcja *Bramki SMS* pokazuje stan, saldo i wysyła
   testowy SMS. Kody na adres zapasowy działają bez konfiguracji; kanały włącza użytkownik.

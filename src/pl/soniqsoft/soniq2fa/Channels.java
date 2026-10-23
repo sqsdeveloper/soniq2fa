@@ -33,9 +33,18 @@ import java.util.Properties;
  *   sms.url=https://api.smsapi.pl/sms.do   (optional)
  *   sms.maxPerHour=200                     (optional, per gateway)
  *   sms.countries=+48                      (optional, allowed number prefixes, comma-separated; against SMS pumping)
+ * Any HTTP SMS gateway instead of SMSAPI (sms.provider=http):
+ *   sms.http.url=<address; may contain {to} {to_digits} {text} {from}, URL-encoded>
+ *   sms.http.method=POST                   (or GET)
+ *   sms.http.header.<Name>=<value>         (e.g. Authorization, Content-Type; never shown on the admin page)
+ *   sms.http.body=<template with {to} {to_digits} {text} {from}>
+ *   sms.http.encoding=form                 (form: URL-encoded values, json: JSON string escapes, none)
+ *   sms.http.success.status=200,201,202    (accepted HTTP codes)
+ *   sms.http.success.match=<regex>         (optional, must be found in the answer)
+ *   sms.http.balance.url=<address>, sms.http.balance.match=<regex, group 1 = balance>   (optional, admin page)
  * Any key can be overridden for one mail domain as domain.<domain>.sms.<key>, e.g. domain.example.com.sms.from=Example;
- * a domain with its own domain.<domain>.sms.token has its own gateway (own account, own hourly limit), the others use
- * the default one. Whether a domain may send SMS at all is set on the domain (flag "sms" of its mechanism, see
+ * a domain with its own domain.<domain>.sms.token (SMSAPI) or sms.http.url has its own gateway (own account, own hourly
+ * limit), the others use the default one. Whether a domain may send SMS at all is set on the domain (flag "sms" of its mechanism, see
  * Soniq2faPage.smsEnabled).
  * No Carbonio classes, so the self-test runs without a mailbox.
  */
@@ -121,7 +130,7 @@ final class Channels {
         for (String k : file.stringPropertyNames()) {
             if (!k.startsWith(prefix + "sms.")) continue;
             p.setProperty(k.substring(prefix.length()), file.getProperty(k));
-            own |= k.equals(prefix + "sms.token");
+            own |= k.equals(prefix + "sms.token") || k.equals(prefix + "sms.http.url");
         }
         p.setProperty("gateway.name", own ? domain.toLowerCase(java.util.Locale.ROOT) : DEFAULT);
         return p;
@@ -132,7 +141,13 @@ final class Channels {
     }
 
     static boolean configured(Properties p) {
-        return "smsapi".equals(p.getProperty("sms.provider", "").trim()) && !p.getProperty("sms.token", "").isBlank();
+        String provider = p.getProperty("sms.provider", "").trim();
+        if ("http".equals(provider)) return !p.getProperty("sms.http.url", "").isBlank();
+        return "smsapi".equals(provider) && !p.getProperty("sms.token", "").isBlank();
+    }
+
+    static boolean http(Properties p) {
+        return "http".equals(p.getProperty("sms.provider", "").trim());
     }
 
     /** The domain's gateway can send (whether the domain may use it is decided by the caller). */
@@ -143,9 +158,13 @@ final class Channels {
     /** Gateways in the file: DEFAULT when it has a token, and every domain with its own sms.token. */
     static List<String> gatewayNames(Properties file) {
         List<String> names = new ArrayList<>();
-        if (!file.getProperty("sms.token", "").isBlank()) names.add(DEFAULT);
-        for (String k : new java.util.TreeSet<>(file.stringPropertyNames()))
-            if (k.startsWith("domain.") && k.endsWith(".sms.token")) names.add(k.substring(7, k.length() - 10));
+        if (!file.getProperty("sms.token", "").isBlank() || !file.getProperty("sms.http.url", "").isBlank()) names.add(DEFAULT);
+        for (String k : new java.util.TreeSet<>(file.stringPropertyNames())) {
+            if (!k.startsWith("domain.")) continue;
+            String name = k.endsWith(".sms.token") ? k.substring(7, k.length() - 10)
+                    : k.endsWith(".sms.http.url") ? k.substring(7, k.length() - 13) : null;
+            if (name != null && !names.contains(name)) names.add(name);
+        }
         return names;
     }
 
@@ -171,6 +190,103 @@ final class Channels {
         synchronized (h) {
             return now - h[0] > 3_600_000 ? 0 : h[1];
         }
+    }
+
+    // ---- any HTTP gateway (sms.provider=http) ----
+
+    /** Values for the templates: {to} +48600111222, {to_digits} 48600111222, {text}, {from}. */
+    static Map<String, String> vars(Properties p, String phone, String text) {
+        return Map.of("to", phone, "to_digits", phone.substring(1), "text", text, "from", p.getProperty("sms.from", "").trim());
+    }
+
+    /** The template with {name} replaced by the values, each encoded: form (URL), json (string escapes) or none. */
+    static String fill(String template, Map<String, String> vars, String encoding) {
+        StringBuilder b = new StringBuilder();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{(to|to_digits|text|from)\\}").matcher(template);
+        while (m.find()) m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(encode(vars.get(m.group(1)), encoding)));
+        m.appendTail(b);
+        return b.toString();
+    }
+
+    static String encode(String v, String encoding) {
+        if ("json".equals(encoding)) {
+            StringBuilder b = new StringBuilder();
+            for (char c : v.toCharArray()) {
+                if (c == '"' || c == '\\') b.append('\\').append(c);
+                else if (c < 0x20) b.append(String.format("\\u%04x", (int) c));
+                else b.append(c);
+            }
+            return b.toString();
+        }
+        if ("none".equals(encoding)) return v;
+        return URLEncoder.encode(v, StandardCharsets.UTF_8);
+    }
+
+    static HttpRequest httpRequest(Properties p, String phone, String text) {
+        Map<String, String> v = vars(p, phone, text);
+        String url = fill(p.getProperty("sms.http.url").trim(), v, "form");
+        String body = fill(p.getProperty("sms.http.body", ""), v, p.getProperty("sms.http.encoding", "form").trim());
+        HttpRequest.Builder r = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(20));
+        headers(p, r);
+        if ("GET".equalsIgnoreCase(p.getProperty("sms.http.method", "POST").trim())) r.GET();
+        else r.POST(HttpRequest.BodyPublishers.ofString(body));
+        return r.build();
+    }
+
+    private static void headers(Properties p, HttpRequest.Builder r) {
+        for (String k : p.stringPropertyNames())
+            if (k.startsWith("sms.http.header.")) r.header(k.substring("sms.http.header.".length()), p.getProperty(k).trim());
+    }
+
+    /** Names of the configured headers, for the admin page (their values may be secrets). */
+    static List<String> headerNames(Properties p) {
+        List<String> n = new ArrayList<>();
+        for (String k : new java.util.TreeSet<>(p.stringPropertyNames()))
+            if (k.startsWith("sms.http.header.")) n.add(k.substring("sms.http.header.".length()));
+        return n;
+    }
+
+    static boolean httpAccepted(Properties p, int status, String body) {
+        boolean code = false;
+        for (String c : p.getProperty("sms.http.success.status", "200,201,202").split(","))
+            code |= c.trim().equals(String.valueOf(status));
+        String match = p.getProperty("sms.http.success.match", "").trim();
+        return code && (match.isEmpty() || java.util.regex.Pattern.compile(match).matcher(body == null ? "" : body).find());
+    }
+
+    /** At most 200 characters of a gateway's answer, without digit runs that could be a phone number. */
+    static String redact(String body) {
+        String b = body == null ? "" : body.replaceAll("\\s+", " ").replaceAll("\\+?[0-9]{7,}", "…");
+        return b.length() > 200 ? b.substring(0, 200) + "…" : b;
+    }
+
+    /** The address without query and user info, for the admin page (a query may carry an API key). */
+    static String publicUrl(Properties p) {
+        String u = http(p) ? p.getProperty("sms.http.url", "") : p.getProperty("sms.url", "https://api.smsapi.pl/sms.do");
+        try {
+            URI x = URI.create(u.trim().replaceAll("\\{[a-z_]+\\}", "x"));
+            return x.getScheme() + "://" + x.getHost() + (x.getPort() > 0 ? ":" + x.getPort() : "") + (x.getPath() == null ? "" : x.getPath());
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+    }
+
+    /** Whether the admin page can ask for the balance: SMSAPI always, other gateways with sms.http.balance.url. */
+    static boolean hasBalance(Properties p) {
+        return !http(p) || !p.getProperty("sms.http.balance.url", "").isBlank();
+    }
+
+    /** Balance or points left on the gateway's account; throws with the answer when it cannot be read. */
+    static String balance(Properties p) throws IOException, InterruptedException {
+        if (!http(p)) return smsapiPoints(p);
+        HttpRequest.Builder r = HttpRequest.newBuilder(URI.create(p.getProperty("sms.http.balance.url", "").trim()))
+                .timeout(Duration.ofSeconds(15)).GET();
+        headers(p, r);
+        HttpResponse<String> resp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+                .send(r.build(), HttpResponse.BodyHandlers.ofString());
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(p.getProperty("sms.http.balance.match", "([0-9.]+)").trim()).matcher(resp.body());
+        if (resp.statusCode() / 100 != 2 || !m.find()) throw new IOException("balance not read: HTTP " + resp.statusCode() + " " + redact(resp.body()));
+        return m.group(m.groupCount() >= 1 ? 1 : 0);
     }
 
     /** Points left on the SMSAPI account of a gateway (GET /profile); throws with the gateway's answer on refusal. */
@@ -204,6 +320,13 @@ final class Channels {
         if (!configured(p)) throw new IOException("SMS gateway '" + p.getProperty("gateway.name") + "' not configured in " + GATEWAY_FILE);
         if (!mayText(p, System.currentTimeMillis()))
             throw new IOException("hourly SMS limit of gateway '" + p.getProperty("gateway.name") + "' reached (sms.maxPerHour)");
+        if (http(p)) {
+            HttpResponse<String> resp = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+                    .send(httpRequest(p, phone, text), HttpResponse.BodyHandlers.ofString());
+            if (!httpAccepted(p, resp.statusCode(), resp.body()))
+                throw new IOException("gateway refused: HTTP " + resp.statusCode() + " " + redact(resp.body()));
+            return;
+        }
         HttpRequest req = HttpRequest.newBuilder(URI.create(p.getProperty("sms.url", "https://api.smsapi.pl/sms.do").trim()))
                 .timeout(Duration.ofSeconds(20))
                 .header("Authorization", "Bearer " + p.getProperty("sms.token").trim())
@@ -229,6 +352,12 @@ final class Channels {
         java.util.regex.Matcher e = java.util.regex.Pattern.compile("\"error\"\\s*:\\s*([0-9]+)").matcher(body == null ? "" : body);
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"message\"\\s*:\\s*\"([^\"]{0,200})\"").matcher(body == null ? "" : body);
         return "error " + (e.find() ? e.group(1) : "?") + ": " + (m.find() ? m.group(1) : "");
+    }
+
+    private static Properties withUrl(Properties p, String url) {
+        Properties c = (Properties) p.clone();
+        c.setProperty("sms.http.url", url);
+        return c;
     }
 
     static void selftest() {
@@ -281,6 +410,35 @@ final class Channels {
         check("T0".equals(net.getProperty("sms.token")) && DEFAULT.equals(net.getProperty("gateway.name")), "domain on the default gateway");
         check(List.of(DEFAULT, "example.com").equals(gatewayNames(f)), "gateway names");
         check(!configured(gateway(new Properties(), "example.com")), "no file, no gateway");
+
+        // any HTTP gateway: a Twilio-like form POST and a JSON one, without sending anything
+        Properties tw = new Properties();
+        tw.setProperty("sms.provider", "http");
+        tw.setProperty("sms.from", "+15005550006");
+        tw.setProperty("sms.http.url", "https://api.example.com/2010-04-01/Accounts/AC1/Messages.json");
+        tw.setProperty("sms.http.header.Authorization", "Basic c2VjcmV0");
+        tw.setProperty("sms.http.header.Content-Type", "application/x-www-form-urlencoded");
+        tw.setProperty("sms.http.body", "To={to}&From={from}&Body={text}");
+        tw.setProperty("sms.http.success.status", "201");
+        tw.setProperty("sms.http.success.match", "\"status\"\\s*:\\s*\"queued\"");
+        HttpRequest twr = httpRequest(tw, "+48600111222", "Code: 123 456 & more");
+        check(configured(tw) && "POST".equals(twr.method()) && twr.headers().firstValue("Authorization").orElse("").equals("Basic c2VjcmV0"),
+                "http gateway: method and headers");
+        check("To=%2B48600111222&From=%2B15005550006&Body=Code%3A+123+456+%26+more".equals(
+                fill(tw.getProperty("sms.http.body"), vars(tw, "+48600111222", "Code: 123 456 & more"), "form")), "http gateway: form body");
+        check(httpAccepted(tw, 201, "{\"sid\":\"SM1\",\"status\":\"queued\"}") && !httpAccepted(tw, 201, "{\"status\":\"failed\"}")
+                && !httpAccepted(tw, 400, "{\"status\":\"queued\"}"), "http gateway: success by code and match");
+        check("{\"phone\":\"48600111222\",\"text\":\"a \\\"b\\\" \\u000a\"}".equals(
+                fill("{\"phone\":\"{to_digits}\",\"text\":\"{text}\"}", vars(tw, "+48600111222", "a \"b\" \n"), "json")), "http gateway: json escapes");
+        check("https://api.example.com/send".equals(publicUrl(withUrl(tw, "https://api.example.com/send?key=SECRET&to={to}"))),
+                "http gateway: address shown without the query");
+        check(!redact("{\"to\":\"+48600111222\",\"error\":\"x\"}").contains("600111222"), "http gateway: answer logged without the number");
+        check(List.of("Authorization", "Content-Type").equals(headerNames(tw)) && !hasBalance(tw), "http gateway: header names, no balance");
+        Properties f2 = new Properties();
+        f2.setProperty("domain.example.net.sms.provider", "http");
+        f2.setProperty("domain.example.net.sms.http.url", "https://sms.example.net/send");
+        check(List.of("example.net").equals(gatewayNames(f2)) && "example.net".equals(gateway(f2, "example.net").getProperty("gateway.name"))
+                && configured(gateway(f2, "example.net")), "http gateway as a domain's own gateway");
     }
 
     private static void check(boolean ok, String name) {

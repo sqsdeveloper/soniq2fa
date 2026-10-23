@@ -246,7 +246,7 @@
   "admin.sms.from": "Nadawca",
   "admin.sms.countries": "Kraje",
   "admin.sms.hour": "Wysłane w tej godzinie / limit",
-  "admin.sms.token": "Token",
+  "admin.sms.token": "Dane dostępu",
   "admin.sms.domains": "Domeny korzystające",
   "admin.sms.default": "domyślna",
   "admin.sms.ready": "gotowa",
@@ -261,5 +261,6 @@
   "admin.err.sms_gateway": "Bramka SMS odrzuciła żądanie.",
   "admin.err.bad_phone": "Podaj numer komórki, np. +48600111222.",
   "admin.err.phone_country": "Ta bramka nie przyjmuje numerów z tego kraju (sms.countries).",
-  "admin.err.mail_limit": "Testowy SMS był wysłany przed chwilą. Spróbuj za minutę."
+  "admin.err.mail_limit": "Testowy SMS był wysłany przed chwilą. Spróbuj za minutę.",
+  "admin.sms.headers": "nagłówki: {names}"
 }

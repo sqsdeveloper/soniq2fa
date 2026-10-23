@@ -246,7 +246,7 @@
   "admin.sms.from": "Sender",
   "admin.sms.countries": "Countries",
   "admin.sms.hour": "Sent this hour / limit",
-  "admin.sms.token": "Token",
+  "admin.sms.token": "Credentials",
   "admin.sms.domains": "Domains using it",
   "admin.sms.default": "default",
   "admin.sms.ready": "ready",
@@ -261,5 +261,6 @@
   "admin.err.sms_gateway": "The SMS gateway refused the request.",
   "admin.err.bad_phone": "Enter a mobile number, e.g. +48600111222.",
   "admin.err.phone_country": "This gateway does not allow numbers from this country (sms.countries).",
-  "admin.err.mail_limit": "A test SMS was sent a moment ago. Try again in a minute."
+  "admin.err.mail_limit": "A test SMS was sent a moment ago. Try again in a minute.",
+  "admin.sms.headers": "headers: {names}"
 }

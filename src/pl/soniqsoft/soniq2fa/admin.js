@@ -119,16 +119,21 @@
     show("gateways-table", j.gateways.length > 0);
     j.gateways.forEach(function (g) {
       var tr = el("tr");
-      tr.appendChild(el("td", g.name === "default" ? t("admin.sms.default") : g.name));
+      var name = el("td", g.name === "default" ? t("admin.sms.default") : g.name);
+      name.appendChild(el("span", (g.provider === "http" ? "HTTP" : "SMSAPI") + " · " + g.url, "sub"));
+      tr.appendChild(name);
       tr.appendChild(el("td", t(g.configured ? "admin.sms.ready" : "admin.sms.incomplete"), g.configured ? "on" : "err"));
       tr.appendChild(el("td", g.from || t("admin.sms.accountDefault")));
       tr.appendChild(el("td", g.countries));
       tr.appendChild(el("td", g.sentThisHour + " / " + g.maxPerHour));
-      tr.appendChild(el("td", g.tokenLength ? t("admin.sms.tokenSet", { n: g.tokenLength }) : "–", g.tokenLength ? "" : "err"));
+      // credentials are never shown: SMSAPI token as its length, an HTTP gateway as the names of its headers
+      var cred = g.provider === "http" ? (g.headers ? t("admin.sms.headers", { names: g.headers }) : "–")
+        : g.tokenLength ? t("admin.sms.tokenSet", { n: g.tokenLength }) : "–";
+      tr.appendChild(el("td", cred, cred === "–" && g.provider !== "http" ? "err" : ""));
       tr.appendChild(el("td", g.domains.length ? g.domains.join(", ") : "–"));
       var act = el("td");
       var points = el("button", t("admin.sms.points"));
-      var out = el("span", "", "sub");
+      var out = el("span", "", "sub out");
       points.onclick = function () {
         out.textContent = "…";
         post("sms-points", { gateway: g.name }).then(function (r) { out.textContent = t("admin.sms.pointsLeft", { points: r.points }); })
@@ -151,7 +156,7 @@
           });
         }).catch(function () { out.textContent = ""; message(t("admin.err.server")); });
       };
-      [points, el("span", " "), phone, el("span", " "), test, out].forEach(function (n) { act.appendChild(n); });
+      [g.balance ? points : null, el("span", " "), phone, el("span", " "), test, out].forEach(function (n) { if (n) act.appendChild(n); });
       tr.appendChild(act);
       tb.appendChild(tr);
     });
