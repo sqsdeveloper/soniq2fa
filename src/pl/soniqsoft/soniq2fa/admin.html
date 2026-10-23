@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 SoniqSoft sp. z o.o. -->
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="admin.title">Two-step verification - administration</title>
+<style>
+  :root { --blue: #2b73d2; --text: #333; --muted: #6b7280; --line: #e3e6ea; --bg: #f5f6f8; --ok: #1f8a4c; --err: #c0392b; --warn: #8a5a00; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--text); background: var(--bg); }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 14px 24px; }
+  main { max-width: 1640px; margin: 24px auto; padding: 0 16px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; overflow-x: auto; }
+  h1 { font-size: 20px; margin: 0; } h2 { font-size: 16px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; }
+  tr.sel td { background: #eef4fc; }
+  tr.closed td { color: var(--muted); }
+  .sub { display: block; font-size: 12px; color: var(--muted); }
+  th.sort { cursor: pointer; user-select: none; } th.sort:hover { color: var(--text); }
+  thead tr.filters th { padding-top: 0; font-weight: 400; }
+  thead tr.filters input, thead tr.filters select { width: 100%; min-width: 6em; font-size: 13px; }
+  a.account { color: var(--blue); text-decoration: none; } a.account:hover { text-decoration: underline; }
+  select, button { font: inherit; }
+  button { background: #fff; color: var(--blue); border: 1px solid var(--blue); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  button.danger { color: var(--err); border-color: var(--err); }
+  .on { color: var(--ok); font-weight: 600; } .warn { color: var(--warn); } .err { color: var(--err); }
+  .msg { padding: 8px 12px; border-radius: 6px; margin: 0 0 16px; }
+  .msg.err { background: #fdecea; } .msg.ok { background: #e3f4ea; color: var(--ok); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><h1 data-i18n="admin.title"></h1></header>
+<main>
+  <div id="msg" hidden></div>
+  <section>
+    <h2 data-i18n="admin.domains"></h2>
+    <p class="muted" data-i18n="admin.domains.intro"></p>
+    <table>
+      <thead><tr><th data-i18n="admin.domain"></th><th data-i18n="admin.level"></th><th data-i18n="admin.sms"></th><th data-i18n="admin.warnings"></th><th></th></tr></thead>
+      <tbody id="domains"></tbody>
+    </table>
+  </section>
+  <section id="sms-box">
+    <h2 data-i18n="admin.sms.title"></h2>
+    <p class="muted" data-i18n="admin.sms.intro"></p>
+    <p><span data-i18n="admin.sms.file"></span> <code id="sms-file"></code> — <span id="sms-state"></span></p>
+    <table id="gateways-table" hidden>
+      <thead><tr><th data-i18n="admin.sms.gateway"></th><th data-i18n="admin.sms.status"></th><th data-i18n="admin.sms.from"></th>
+        <th data-i18n="admin.sms.countries"></th><th data-i18n="admin.sms.hour"></th><th data-i18n="admin.sms.token"></th>
+        <th data-i18n="admin.sms.domains"></th><th></th></tr></thead>
+      <tbody id="gateways"></tbody>
+    </table>
+  </section>
+  <section id="accounts-box" hidden>
+    <h2><span data-i18n="admin.accounts"></span> <span id="domain-name"></span></h2>
+    <p class="muted" data-i18n="admin.accounts.intro"></p>
+    <p class="muted" id="accounts-count"></p>
+    <table>
+      <thead id="accounts-head"></thead>
+      <tbody id="accounts"></tbody>
+    </table>
+  </section>
+</main>
+<script src="?op=admin.js"></script>
+</body>
+</html>

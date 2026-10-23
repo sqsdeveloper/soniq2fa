@@ -1,0 +1,12 @@
+{
+	"name": "soniq2fa-ui",
+	"js_entrypoint": "/static/iris/soniq2fa-ui/1/app.js",
+	"description": "Two-step verification (soniq2fa)",
+	"version": "1",
+	"commit": "1",
+	"priority": 11,
+	"type": "carbonio",
+	"attrKey": "",
+	"icon": "LockOutline",
+	"display": "Two-step verification"
+}

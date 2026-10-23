@@ -1,0 +1,66 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 SoniqSoft sp. z o.o. -->
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="recover.title">Password recovery</title>
+<style>
+  :root { --blue: #2b73d2; --text: #333; --muted: #6b7280; --line: #e3e6ea; --bg: #f5f6f8; --ok: #1f8a4c; --err: #c0392b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--text); background: var(--bg); }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header a { color: var(--blue); text-decoration: none; }
+  main { max-width: 560px; margin: 24px auto; padding: 0 16px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; } h2 { font-size: 17px; margin: 0 0 8px; }
+  p { margin: 8px 0; } .muted { color: var(--muted); font-size: 14px; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 14px; }
+  input { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid #c9ced6; border-radius: 6px; }
+  input.code { letter-spacing: 2px; }
+  button { font: inherit; background: var(--blue); color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; margin-top: 16px; }
+  button.secondary { background: #fff; color: var(--blue); border: 1px solid var(--blue); margin-left: 8px; }
+  .msg { padding: 8px 12px; border-radius: 6px; margin: 0 0 12px; }
+  .msg.err { background: #fdecea; color: var(--err); } .msg.ok { background: #e3f4ea; color: var(--ok); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><h1 data-i18n="recover.title"></h1><a href="/" data-i18n="recover.toLogin"></a></header>
+<main>
+  <div id="msg" hidden></div>
+  <section id="step1">
+    <h2 data-i18n="recover.step1"></h2>
+    <p class="muted" data-i18n="recover.step1.intro"></p>
+    <form id="start-form">
+      <label for="account" data-i18n="recover.account"></label>
+      <input id="account" type="email" autocomplete="username" required>
+      <button id="start" type="submit" data-i18n="recover.send"></button>
+    </form>
+  </section>
+  <section id="step2" hidden>
+    <h2 data-i18n="recover.step2"></h2>
+    <p class="muted" data-i18n="recover.step2.intro"></p>
+    <form id="finish-form">
+      <label for="mail-code" data-i18n="recover.mailCode"></label>
+      <input id="mail-code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="9" required>
+      <label for="code" data-i18n="recover.code"></label>
+      <input id="code" class="code" autocomplete="off" maxlength="11" required>
+      <label for="password" data-i18n="recover.password"></label>
+      <input id="password" type="password" autocomplete="new-password" required>
+      <label for="password2" data-i18n="recover.password2"></label>
+      <input id="password2" type="password" autocomplete="new-password" required>
+      <button id="finish" type="submit" data-i18n="recover.change"></button>
+      <button id="again" type="button" class="secondary" data-i18n="recover.again"></button>
+    </form>
+  </section>
+  <section id="done" hidden>
+    <h2 data-i18n="recover.done"></h2>
+    <p data-i18n="recover.done.intro"></p>
+    <p><a href="/" data-i18n="recover.toLogin"></a></p>
+  </section>
+</main>
+<script src="?op=recover.js"></script>
+</body>
+</html>

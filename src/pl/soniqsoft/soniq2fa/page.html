@@ -1,0 +1,190 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 SoniqSoft sp. z o.o. -->
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="title">Two-step verification</title>
+<style>
+  :root { --blue: #2b73d2; --text: #333; --muted: #6b7280; --line: #e3e6ea; --bg: #f5f6f8; --ok: #1f8a4c; --err: #c0392b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--text); background: var(--bg); }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header a { color: var(--blue); text-decoration: none; }
+  main { max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 17px; margin: 0 0 8px; }
+  p { margin: 8px 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .status { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; }
+  .on { background: #e3f4ea; color: var(--ok); } .off { background: #f0f1f3; color: var(--muted); }
+  button { font: inherit; background: var(--blue); color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--blue); border: 1px solid var(--blue); }
+  button.danger { background: #fff; color: var(--err); border: 1px solid var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  input { font: inherit; padding: 7px 10px; border: 1px solid #c9ced6; border-radius: 6px; }
+  input.code { width: 13ch; letter-spacing: 2px; text-align: center; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+  .qr { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
+  .qr svg { border: 1px solid var(--line); border-radius: 6px; }
+  code, .secret { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .secret { background: var(--bg); padding: 4px 8px; border-radius: 4px; word-break: break-all; }
+  .password { font-size: 20px; background: #fffbe6; border: 1px solid #f1d77c; padding: 10px 14px; border-radius: 6px; display: inline-block; }
+  ul.devices { list-style: none; padding: 0; margin: 8px 0; }
+  ul.devices li { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .msg { padding: 8px 12px; border-radius: 6px; margin: 8px 0; }
+  .msg.err, .notice { background: #fdecea; color: var(--err); }
+  .notice { padding: 8px 12px; border-radius: 6px; margin: 0 0 16px; } .msg.ok { background: #e3f4ea; color: var(--ok); }
+  table.cfg { border-collapse: collapse; font-size: 14px; } table.cfg td { padding: 2px 12px 2px 0; }
+  [hidden] { display: none !important; }
+  body.loading main { visibility: hidden; }
+</style>
+</head>
+<body class="loading">
+<header><h1 data-i18n="title"></h1><a href="/" data-i18n="back"></a></header>
+<main>
+  <div id="msg"></div>
+
+  <section id="unavailable" hidden>
+    <p data-i18n="unavailable"></p>
+    <p class="muted" id="unavailable-reason"></p>
+  </section>
+
+  <section id="off" hidden>
+    <h2><span data-i18n="state"></span> <span class="status off" data-i18n="state.off"></span></h2>
+    <p data-i18n="off.intro"></p>
+    <p class="muted" data-i18n="off.devices"></p>
+    <p class="muted" data-i18n="off.recovery"></p>
+    <button id="start" data-i18n="off.enable"></button>
+  </section>
+
+  <section id="enroll" hidden>
+    <h2 data-i18n="enroll.scan"></h2>
+    <div class="qr">
+      <div id="qr"></div>
+      <div>
+        <p class="muted" data-i18n="enroll.manual"></p>
+        <p class="secret" id="secret"></p>
+        <p class="muted" data-i18n="enroll.type"></p>
+      </div>
+    </div>
+    <h2 data-i18n="enroll.enter"></h2>
+    <div class="row">
+      <input id="confirm-password" type="password" autocomplete="current-password" data-i18n-placeholder="enroll.password">
+      <input id="confirm-code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000000" data-i18n-label="code">
+      <button id="confirm" data-i18n="enroll.confirm"></button>
+      <button id="cancel" class="secondary" data-i18n="cancel"></button>
+    </div>
+  </section>
+
+  <div id="recovery-warn" class="notice" hidden data-i18n="recovery.warn"></div>
+
+  <section id="on" hidden>
+    <h2><span data-i18n="state"></span> <span class="status on" data-i18n="state.on"></span></h2>
+    <p class="muted" data-i18n="on.hint"></p>
+  </section>
+
+  <section id="backup" hidden>
+    <h2 data-i18n="backup.title"></h2>
+    <p class="muted" data-i18n="backup.intro"></p>
+    <p><span data-i18n="backup.left"></span> <strong id="backup-left"></strong></p>
+    <div id="codes-box" hidden>
+      <p><strong data-i18n="backup.save"></strong></p>
+      <ol class="secret" id="codes" style="columns:2; padding:12px 12px 12px 36px"></ol>
+      <div class="row"><button id="codes-copy" class="secondary" data-i18n="backup.copy"></button><button id="codes-download" class="secondary" data-i18n="backup.download"></button></div>
+    </div>
+    <div class="row">
+      <button id="codes-new" class="secondary" data-i18n="backup.new"></button>
+    </div>
+    <p class="muted" data-i18n="backup.voids"></p>
+  </section>
+
+  <section id="devices" hidden>
+    <h2 data-i18n="devices.title"></h2>
+    <p class="muted" data-i18n="devices.intro"></p>
+    <ul class="devices" id="device-list"></ul>
+    <p id="no-devices" class="muted" data-i18n="devices.none"></p>
+    <h2 style="margin-top:16px" data-i18n="devices.add"></h2>
+    <div class="row">
+      <input id="label" maxlength="40" data-i18n-placeholder="devices.label">
+      <button id="create" data-i18n="devices.create"></button>
+    </div>
+    <div id="new-password" hidden>
+      <p><span data-i18n="devices.newFor"></span> <strong id="new-label"></strong> <span data-i18n="devices.newHint"></span>
+        <strong data-i18n="devices.onlyNow"></strong></p>
+      <div class="row"><span class="password secret" id="new-pw"></span><button id="copy" class="secondary" data-i18n="backup.copy"></button></div>
+      <table class="cfg">
+        <tr><td data-i18n="devices.user"></td><td><code id="cfg-user"></code></td></tr>
+        <tr><td>IMAP</td><td><code class="cfg-host"></code>, <span data-i18n="devices.imap"></span></td></tr>
+        <tr><td>SMTP</td><td><code class="cfg-host"></code>, <span data-i18n="devices.smtp"></span></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="channels-box" hidden>
+    <h2 data-i18n="channels.title"></h2>
+    <p class="muted" data-i18n="channels.intro"></p>
+    <div class="row">
+      <input id="channels-password" type="password" autocomplete="current-password" data-i18n-placeholder="channels.password">
+    </div>
+    <h2 style="margin-top:16px" data-i18n="channels.sms"></h2>
+    <p id="sms-unavailable" class="muted" data-i18n="channels.smsUnavailable"></p>
+    <div id="sms-box">
+      <p><span data-i18n="channels.smsCurrent"></span> <strong id="phone-current"></strong></p>
+      <div class="row">
+        <input id="phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="20" data-i18n-placeholder="channels.smsPlaceholder">
+        <button id="phone-send" class="secondary" data-i18n="channels.smsSend"></button>
+        <button id="phone-remove" class="danger" data-i18n="channels.smsRemove"></button>
+      </div>
+      <p class="muted" id="phone-format" data-i18n="channels.smsFormat"></p>
+      <div class="row" id="phone-verify" hidden>
+        <input id="phone-code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000000" data-i18n-label="channels.smsCode">
+        <button id="phone-confirm" data-i18n="channels.smsConfirm"></button>
+      </div>
+    </div>
+    <h2 style="margin-top:16px" data-i18n="channels.email"></h2>
+    <p class="muted" data-i18n="channels.emailIntro"></p>
+    <p><span data-i18n="channels.emailState"></span> <strong id="email-state"></strong></p>
+    <p id="email-needs-address" class="muted" data-i18n="channels.emailNeedsAddress"></p>
+    <div class="row">
+      <button id="email-on" class="secondary" data-i18n="channels.emailOn"></button>
+      <button id="email-off" class="danger" data-i18n="channels.emailOff"></button>
+    </div>
+  </section>
+
+  <section id="address-box" hidden>
+    <h2 data-i18n="address.title"></h2>
+    <p class="muted" data-i18n="address.intro"></p>
+    <p><span data-i18n="address.current"></span> <strong id="address-current"></strong></p>
+    <div class="row">
+      <input id="address" type="email" autocomplete="email" data-i18n-placeholder="address.placeholder">
+      <button id="address-send" class="secondary" data-i18n="address.send"></button>
+    </div>
+    <div class="row" id="address-verify" hidden>
+      <input id="address-code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="00000000" data-i18n-label="address.code">
+      <button id="address-confirm" data-i18n="address.confirm"></button>
+    </div>
+  </section>
+
+  <section id="disable-box" hidden>
+    <h2 data-i18n="disable.title"></h2>
+    <p class="muted" data-i18n="disable.intro"></p>
+    <div class="row">
+      <button id="disable" class="danger" data-i18n="disable.button"></button>
+    </div>
+  </section>
+
+  <section id="rekey-box" hidden>
+    <h2 data-i18n="rekey.title"></h2>
+    <p class="muted" data-i18n="rekey.intro"></p>
+    <div class="row">
+      <button id="rekey" class="secondary" data-i18n="rekey.button"></button>
+    </div>
+  </section>
+</main>
+<script src="?op=qrcode.js"></script>
+<script src="?op=app.js"></script>
+</body>
+</html>
