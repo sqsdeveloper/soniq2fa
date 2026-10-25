@@ -82,6 +82,12 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
     @Override
     public void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         Soniq2faPage.noCache(resp);
+        // parameters only from the body: a query string would take precedence in getParameter and let a crafted link
+        // swap the action our own page sends (e.g. ?op=disable), whatever the user clicked
+        if (req.getQueryString() != null && !req.getQueryString().isEmpty()) {
+            Soniq2faPage.json(resp, 400, "{\"error\":\"rejected\"}");
+            return;
+        }
         if (req.getHeader("X-Soniq2fa") == null || !Soniq2faPage.sameHost(req.getHeader("Origin"), req.getHeader("Host"))) {
             Soniq2faPage.json(resp, 403, "{\"error\":\"rejected\"}");
             return;
@@ -119,10 +125,9 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
     }
 
     /** The client address: behind the Carbonio proxy the first X-Forwarded-For entry, else the connection's. For logs and the notice. */
-    private static String client(HttpServletRequest req) {
-        String f = req.getHeader("X-Forwarded-For");
-        if (f != null && !f.isBlank()) return f.split(",")[0].trim();
-        return req.getRemoteAddr();
+    static String client(HttpServletRequest req) {
+        // the entry the proxy appends; earlier ones come from the client and could put any text into notices and logs
+        return safe(proxyPeer(req));
     }
 
     /** The account when recovery applies to it: its domain uses soniq2fa, 2FA is on and the address is verified. */
@@ -133,20 +138,37 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
             if (a == null || Soniq2faPage.unavailable(a) != null) return null;
             String secret = a.getAttr(Soniq2faAuth.A_SECRET);
             if (secret == null || secret.isEmpty()) return null;
-            if (!"verified".equals(a.getAttr(A_ADDRESS_STATUS)) || a.getAttr(A_ADDRESS, "").isEmpty()) return null;
+            if (!confirmedAddress(a)) return null;
             return a;
         } catch (Exception e) {
             return null;
         }
     }
 
+    /**
+     * The recovery address counts only when it was confirmed with a mailed code on our page: zimbraPrefPasswordRecovery*
+     * are preferences the user's own session can set through ModifyPrefs (address and "verified" at once), so a stolen
+     * session could point recovery at the attacker. The page records the confirmed address in the immutable channel
+     * attribute ("recovery:<address>"), which SOAP cannot write.
+     */
+    static boolean confirmedAddress(Account a) {
+        String addr = a.getAttr(A_ADDRESS, "");
+        return !addr.isEmpty() && "verified".equals(a.getAttr(A_ADDRESS_STATUS))
+                && java.util.Arrays.asList(a.getMultiAttr(Channels.A_CHANNELS)).contains(Channels.RECOVERY_PREFIX + addr.toLowerCase(java.util.Locale.ROOT));
+    }
+
     private static void start(String name, String ip) {
         Account a = eligible(name);
         if (a == null) {
-            ZimbraLog.account.info("soniq2fa: recovery code not sent for '%s' (no such account, no 2FA or no verified address; ip=%s)", safe(name), ip);
+            ZimbraLog.account.info("soniq2fa: recovery code not sent for '%s' (no such account, no 2FA or no confirmed address; ip=%s)", safe(name), ip);
             return;
         }
-        if (!RecoveryCodes.mayMail(a.getId())) {
+        // a pending code stays valid: a stranger asking again must not void the code the owner already has
+        if (RecoveryCodes.pending("reset:" + a.getId())) {
+            ZimbraLog.account.info("soniq2fa: recovery code for %s not sent, one is still valid (ip=%s)", a.getName(), ip);
+            return;
+        }
+        if (!RecoveryCodes.mayMail("reset:" + a.getId())) {
             ZimbraLog.account.info("soniq2fa: recovery code for %s not sent, mail limit reached (ip=%s)", a.getName(), ip);
             return;
         }
@@ -174,13 +196,13 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
             ZimbraLog.account.info("soniq2fa: login code not sent for '%s' (no such active account with 2FA; ip=%s)", safe(name), ip);
             return;
         }
-        if (!TwoFa.SEND_THROTTLE.tryAcquire(a.getId() + "|" + proxyPeer(req), System.currentTimeMillis())) {
-            ZimbraLog.account.info("soniq2fa: login code for %s not sent, too many password attempts (ip=%s)", a.getName(), ip);
-            return;
-        }
         LdapLockoutPolicy lockout = new LdapLockoutPolicy(prov, a);
         if (lockout.isLockedOut()) {
             ZimbraLog.account.info("soniq2fa: login code for %s not sent, account locked out (ip=%s)", a.getName(), ip);
+            return;
+        }
+        if (!TwoFa.SEND_THROTTLE.tryAcquire(a.getId() + "|" + proxyPeer(req), System.currentTimeMillis())) {
+            ZimbraLog.account.info("soniq2fa: login code for %s not sent, too many password attempts (ip=%s)", a.getName(), ip);
             return;
         }
         try {
@@ -262,10 +284,16 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
         Account a = eligible(name);
         String key = a == null ? null : "reset:" + a.getId();
         if (a == null || RecoveryCodes.check(key, mailCode, false) == null) return "invalid_mail_code";
-        String error = Soniq2faAuth.verifySecondFactor(a, a.getAttr(Soniq2faAuth.A_SECRET), code, true);
-        if (error != null) return error;
         if (password == null || password.isEmpty()) return "password_policy";
         Provisioning prov = Provisioning.getInstance();
+        // before the second factor, so a rejected new password does not use up a backup code
+        try {
+            prov.checkPasswordStrength(a, password);
+        } catch (ServiceException e) {
+            throw new PolicyError(e.getMessage());
+        }
+        String error = Soniq2faAuth.verifySecondFactor(a, a.getAttr(Soniq2faAuth.A_SECRET), code, true);
+        if (error != null) return error;
         try {
             prov.setPassword(a, password, true);
         } catch (ServiceException e) {
@@ -289,7 +317,7 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
 
     /** Sends a code that confirms a new recovery address; called from the self-service page. */
     static boolean verifyAddress(Account a, String address) {
-        if (!RecoveryCodes.mayMail(a.getId())) return false;
+        if (!RecoveryCodes.mayMail("address:" + a.getId())) return false;
         String code = RecoveryCodes.issue("address:" + a.getId(), ADDRESS_MS, address);
         mailLater(a, address, "mail.verify.subject", "mail.verify.body", Map.of("code", code, "account", a.getName(), "minutes", "30"));
         ZimbraLog.account.info("soniq2fa: %s asked to verify a new recovery address", a.getName());
@@ -323,6 +351,11 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
                 ZimbraLog.account.warn("soniq2fa: mail '%s' to the recovery address of %s failed", subjectKey, a.getName(), e);
             }
         });
+    }
+
+    /** A notice mail (no code) to an address of the account, sent in the background. */
+    static void notice(Account a, String to, String subjectKey, String bodyKey, Map<String, String> vars) {
+        mailLater(a, to, subjectKey, bodyKey, vars);
     }
 
     private static void textLater(Account a, String phone, String key, Map<String, String> vars) {

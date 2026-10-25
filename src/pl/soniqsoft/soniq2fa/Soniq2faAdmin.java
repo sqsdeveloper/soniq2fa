@@ -89,6 +89,12 @@ public final class Soniq2faAdmin extends ExtensionHttpHandler {
     @Override
     public void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         Soniq2faPage.noCache(resp);
+        // parameters only from the body: a query string would take precedence in getParameter and let a crafted link
+        // swap the action our own page sends (e.g. ?op=disable), whatever the user clicked
+        if (req.getQueryString() != null && !req.getQueryString().isEmpty()) {
+            Soniq2faPage.json(resp, 400, "{\"error\":\"rejected\"}");
+            return;
+        }
         if (req.getHeader("X-Soniq2fa") == null || !Soniq2faPage.sameHost(req.getHeader("Origin"), req.getHeader("Host"))) {
             Soniq2faPage.json(resp, 403, "{\"error\":\"rejected\"}");
             return;

@@ -147,7 +147,7 @@
   "admin.openInConsole": "Open the domain's accounts in the Carbonio admin console (account details: click it in the list)",
   "login.recover": "Forgot your password? Recovery for accounts with two-step verification",
   "address.title": "Password recovery address",
-  "address.intro": "If you forget your password, we send a code to this address. Changing the password takes this code and the code from the app (or a backup code). Use an address outside this mailbox, such as a private one.",
+  "address.intro": "If you forget your password, we send a code to this address. Changing the password takes this code and the code from the app (or a backup code). Use an address outside this mail server, such as a private one; changing it takes your password.",
   "address.current": "Current address:",
   "address.none": "not set",
   "address.placeholder": "e.g. anna@private.example",
@@ -262,5 +262,9 @@
   "admin.err.bad_phone": "Enter a mobile number, e.g. +48600111222.",
   "admin.err.phone_country": "This gateway does not allow numbers from this country (sms.countries).",
   "admin.err.mail_limit": "A test SMS was sent a moment ago. Try again in a minute.",
-  "admin.sms.headers": "headers: {names}"
+  "admin.sms.headers": "headers: {names}",
+  "mail.addressChanged.subject": "Your password recovery address was changed",
+  "mail.addressChanged.body": "The password recovery address of the mailbox {account} was changed to {address}, from {ip}. Codes to reset the password now go there.\n\nIf this was not you, contact your administrator at once.",
+  "mail.enabled.subject": "Two-step verification turned on",
+  "mail.enabled.body": "Two-step verification was turned on (or set up again with a new phone) for the mailbox {account}, from {ip}. Other sessions of the mailbox were ended.\n\nIf this was not you, contact your administrator at once."
 }

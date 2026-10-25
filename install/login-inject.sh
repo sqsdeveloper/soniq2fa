@@ -16,14 +16,23 @@ ADMIN_INDEX=${ADMIN_INDEX:-/opt/zextras/admin/iris/carbonio-admin-ui/current/ind
 ADMIN_TAG='<script defer src="/static/iris/soniq2fa-admin-link.js"></script>'
 ADMIN_JS=${ADMIN_JS:-/opt/zextras/admin/iris/soniq2fa-admin-link.js}
 # rewrite in place through a temp file: keeps owner and mode, works with GNU and BSD sed
-editf() { sed "$2" "$1" > "$1.soniq2fa.tmp" && cat "$1.soniq2fa.tmp" > "$1" && rm -f "$1.soniq2fa.tmp"; }
+# Runs as root from the apt hook in directories of web packages: no fixed temp names (mktemp) and no writing through
+# symlinks, so whoever can write there cannot redirect root's writes to another file.
+editf() {
+  [ -L "$1" ] && { echo "soniq2fa: $1 is a symlink, not changed" >&2; return 0; }
+  t=$(mktemp "$(dirname "$1")/.soniq2fa.XXXXXX") || return 1
+  sed "$2" "$1" > "$t" && cat "$t" > "$1"
+  rm -f "$t"
+}
+# install unlinks the destination before writing, so a symlink planted there is replaced, not followed
+put() { rm -f "$2" && install -m 644 "$1" "$2"; }
 edit() { editf "$INDEX" "$1"; }
 
 # admin console: a button to the administration page, before the console's own bundle
 case "${1:-add}" in
   add)
     if [ -f "$ADMIN_INDEX" ] && [ -f "$(dirname "$0")/admin-link.js" ]; then
-      cp "$(dirname "$0")/admin-link.js" "$ADMIN_JS.tmp" && chmod 644 "$ADMIN_JS.tmp" && mv "$ADMIN_JS.tmp" "$ADMIN_JS"
+      put "$(dirname "$0")/admin-link.js" "$ADMIN_JS"
       if ! grep -qF "$ADMIN_TAG" "$ADMIN_INDEX"; then
         if grep -q '<script type="module" crossorigin src="/static/iris/carbonio-admin-ui/shell.mjs">' "$ADMIN_INDEX"; then
           editf "$ADMIN_INDEX" "s#<script type=\"module\" crossorigin src=\"/static/iris/carbonio-admin-ui/shell.mjs\">#$ADMIN_TAG&#"
@@ -45,9 +54,7 @@ ADMIN_LOGIN_TAG='<script src="soniq2fa-login.js" data-admin></script>'
 if [ -f "$ADMIN_LOGIN" ]; then
   case "${1:-add}" in
     add)
-      cp "$(dirname "$0")/login.js" "$(dirname "$ADMIN_LOGIN")/soniq2fa-login.js.tmp" \
-        && chmod 644 "$(dirname "$ADMIN_LOGIN")/soniq2fa-login.js.tmp" \
-        && mv "$(dirname "$ADMIN_LOGIN")/soniq2fa-login.js.tmp" "$(dirname "$ADMIN_LOGIN")/soniq2fa-login.js"
+      put "$(dirname "$0")/login.js" "$(dirname "$ADMIN_LOGIN")/soniq2fa-login.js"
       if ! grep -qF "$ADMIN_LOGIN_TAG" "$ADMIN_LOGIN"; then
         if grep -q '<script defer="defer" src="index.js">' "$ADMIN_LOGIN"; then
           editf "$ADMIN_LOGIN" "s#<script defer=\"defer\" src=\"index.js\">#$ADMIN_LOGIN_TAG&#"
@@ -66,7 +73,7 @@ fi
 [ -f "$INDEX" ] || exit 0
 case "${1:-add}" in
   add)
-    cp "$(dirname "$0")/login.js" "$JS.tmp" && chmod 644 "$JS.tmp" && mv "$JS.tmp" "$JS"
+    put "$(dirname "$0")/login.js" "$JS"
     if grep -qF "$OLD" "$INDEX"; then edit "s#$OLD##"; fi
     grep -qF "$TAG" "$INDEX" && exit 0
     # before the page's own bundle, so fetch is wrapped before the form uses it

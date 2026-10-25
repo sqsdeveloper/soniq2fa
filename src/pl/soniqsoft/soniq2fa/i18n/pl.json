@@ -147,7 +147,7 @@
   "admin.openInConsole": "Otwórz listę kont domeny w konsoli Carbonio (szczegóły konta: kliknij je na liście)",
   "login.recover": "Nie pamiętasz hasła? Odzyskiwanie dla kont z weryfikacją dwuetapową",
   "address.title": "Adres do odzyskiwania hasła",
-  "address.intro": "Gdy zapomnisz hasła, wyślemy na ten adres kod. Do zmiany hasła potrzebny będzie ten kod i kod z aplikacji (albo kod zapasowy). Podaj adres poza tą skrzynką, np. prywatny.",
+  "address.intro": "Gdy zapomnisz hasła, wyślemy na ten adres kod. Do zmiany hasła potrzebny będzie ten kod i kod z aplikacji (albo kod zapasowy). Podaj adres spoza tego serwera poczty, np. prywatny; zmiana adresu wymaga hasła.",
   "address.current": "Obecny adres:",
   "address.none": "nie ustawiono",
   "address.placeholder": "np. anna@prywatna.example",
@@ -262,5 +262,9 @@
   "admin.err.bad_phone": "Podaj numer komórki, np. +48600111222.",
   "admin.err.phone_country": "Ta bramka nie przyjmuje numerów z tego kraju (sms.countries).",
   "admin.err.mail_limit": "Testowy SMS był wysłany przed chwilą. Spróbuj za minutę.",
-  "admin.sms.headers": "nagłówki: {names}"
+  "admin.sms.headers": "nagłówki: {names}",
+  "mail.addressChanged.subject": "Zmieniono adres do odzyskiwania hasła",
+  "mail.addressChanged.body": "Adres do odzyskiwania hasła skrzynki {account} zmieniono na {address}, z adresu {ip}. Kody do zmiany hasła trafiają teraz tam.\n\nJeśli to nie Ty, natychmiast skontaktuj się z administratorem.",
+  "mail.enabled.subject": "Włączono weryfikację dwuetapową",
+  "mail.enabled.body": "Dla skrzynki {account} włączono weryfikację dwuetapową (albo skonfigurowano ją od nowa z nowym telefonem), z adresu {ip}. Pozostałe sesje skrzynki zostały zakończone.\n\nJeśli to nie Ty, natychmiast skontaktuj się z administratorem."
 }

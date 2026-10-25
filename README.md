@@ -168,7 +168,15 @@ ask your administrator to turn it off unless it was intended.
   (`zimbraMtaAuthPort`, 7073 by default, not proxied by nginx), by the peer address (loopback, a local address
   or a server running the `mta` service) and by not being an admin login. Headers such as `X-Forwarded-Proto`
   are not trusted: on the HTTPS virtual host nginx passes them from the client.
-- A TOTP code is accepted only from a time step later than the last accepted one for the account.
+- A TOTP code is accepted only from a time step later than the last accepted one for the account. Wrong second
+  factors are limited to 5 per 10 minutes and 50 a day per account.
+- POSTs with a query string are refused. Jetty prefers query parameters over the body, so otherwise a crafted link
+  could change what a page sends when the user clicks something.
+- Password recovery only uses an address confirmed with a mailed code on the self-service page. The address itself
+  is a user preference that any session can change through `ModifyPrefs`, so the page also stores the confirmed one in
+  `zimbraTwoFactorAuthTrustedDevices` (`recovery:<address>`), which users can't write. Changing it needs the mailbox
+  password and an address outside this server. The old address gets a notice, and so does the recovery address when
+  2FA is turned on.
 - Codes by SMS and e-mail are channels the user turns on, with the mailbox password typed again (a stolen session
   alone cannot bind another phone); the phone number is confirmed with an SMS code, the address is the confirmed
   recovery address and must be outside the domains of this server (otherwise a device password could read the code).
@@ -575,6 +583,13 @@ To remove it, run `login-inject.sh remove`, delete the apt hook, clear `zimbraAu
 `custom:soniq2fa` after the extension is gone lets nobody sign in — then delete `/opt/zextras/lib/ext/soniq2fa`
 and restart the mailbox.
 
+## Upgrading soniq2fa
+
+From 1.0.0: recovery addresses confirmed with 1.0.0 have to be confirmed once more on the self-service page. Until
+then password recovery and codes by e-mail are off for those accounts. If you'd rather not ask users, check the
+addresses and add `recovery:<address in lower case>` to `zimbraTwoFactorAuthTrustedDevices` of each account (it is
+immutable, so through LDAP, as in *Command line*).
+
 ## After a Carbonio upgrade
 
 Rebuild the jar against the new mailbox jars, reinstall, and check `Initialized extension soniq2fa` in
@@ -604,7 +619,10 @@ The login pages send the same `AuthRequest` JSON; a change in how the server ans
   `/service/admin/soap/AuthRequest` (admin console) through `fetch` (carbonio-login-ui 0.9.x–0.11.x and the matching
   carbonio-admin-login-ui).
 - Enforcement covers webmail: a required account that has not set 2FA up yet still signs in to mail programs with
-  the password, until the user sets it up.
+  the password, until the user sets it up. In webmail the setup window over the mail is shown by the browser; a user
+  who removes it keeps using webmail with the password alone until setting 2FA up. Until then the account has only its
+  password, and whoever knows it can set 2FA up with their own phone first. Require 2FA where it matters and ask users
+  to set it up soon.
 - Carbonio's built-in password recovery and 2FA exclude each other (its mailed code skips the second factor); the
   extension's own recovery replaces it for enrolled accounts. Its codes are kept in memory, so a mailbox restart voids
   them, and mail goes out through the local MTA with the account itself as the sender.

@@ -108,6 +108,12 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
     @Override
     public void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         noCache(resp);
+        // parameters only from the body: a query string would take precedence in getParameter and let a crafted link
+        // swap the action our own page sends (e.g. ?op=disable), whatever the user clicked
+        if (req.getQueryString() != null && !req.getQueryString().isEmpty()) {
+            json(resp, 400, "{\"error\":\"rejected\"}");
+            return;
+        }
         if (req.getHeader("X-Soniq2fa") == null || !sameHost(req.getHeader("Origin"), req.getHeader("Host"))) {
             json(resp, 403, "{\"error\":\"rejected\"}");
             return;
@@ -154,7 +160,11 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                     // ...except this one: a new session cookie, so webmail around the page keeps working
                     // encode(req, resp, boolean) is a no-op in Carbonio; this is the call its AuthRequest makes
                     AuthProvider.getAuthToken(acct).encode(resp, false, com.zimbra.common.util.ZimbraCookie.secureCookie(req), false);
-                    ZimbraLog.account.info("soniq2fa: %s %s two-factor authentication", acct.getName(), on ? "set up again" : "enabled");
+                    ZimbraLog.account.info("soniq2fa: %s %s two-factor authentication (ip=%s)", acct.getName(), on ? "set up again" : "enabled",
+                            Soniq2faRecovery.client(req));
+                    if (Soniq2faRecovery.confirmedAddress(acct))
+                        Soniq2faRecovery.notice(acct, acct.getAttr(Soniq2faRecovery.A_ADDRESS), "mail.enabled.subject", "mail.enabled.body",
+                                Map.of("account", acct.getName(), "ip", Soniq2faRecovery.client(req)));
                     Soniq2faAuth.dropImapConnections(acct, "2FA turned on");
                     json(resp, 200, withCodes(state(acct), codes));
                 }
@@ -170,7 +180,8 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                         prov.modifyAttrs(acct, m, false);
                     }
                     RecoveryCodes.drop(Soniq2faRecovery.loginKey(acct));
-                    ZimbraLog.account.info("soniq2fa: %s disabled two-factor authentication", acct.getName());
+                    ZimbraLog.account.info("soniq2fa: %s disabled two-factor authentication (ip=%s)", acct.getName(), Soniq2faRecovery.client(req));
+                    Soniq2faAuth.dropImapConnections(acct, "2FA turned off");
                     json(resp, 200, state(acct));
                 }
                 case "create" -> {
@@ -204,14 +215,22 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                     address = address == null ? "" : address.trim();
                     if (!address.matches("[^@\\s]{1,64}@[^@\\s]{1,253}\\.[^@\\s]{2,}") || address.equalsIgnoreCase(acct.getName()))
                         throw new UserError("bad_address");
+                    // on this server it could be an alias of this very mailbox, readable with a device password
+                    if (Soniq2faRecovery.onThisServer(address)) throw new UserError("address_local");
+                    checkPassword(prov, acct, req.getParameter("password"));
                     if (!Soniq2faRecovery.verifyAddress(acct, address)) throw new UserError("mail_limit");
                     json(resp, 200, "{\"pending\":" + q(RecoveryCodes.mask(address)) + "}");
                 }
                 case "address-confirm" -> {
                     String address = Soniq2faRecovery.confirmAddress(acct, req.getParameter("code"));
                     if (address == null) throw new UserError("invalid_mail_code");
+                    String previous = Soniq2faRecovery.confirmedAddress(acct) ? acct.getAttr(Soniq2faRecovery.A_ADDRESS) : null;
                     prov.modifyAttrs(acct, Map.of(Soniq2faRecovery.A_ADDRESS, address, Soniq2faRecovery.A_ADDRESS_STATUS, "verified"), false);
+                    setChannel(prov, acct, Channels.RECOVERY_PREFIX, Channels.RECOVERY_PREFIX + address.toLowerCase(java.util.Locale.ROOT));
                     RecoveryCodes.drop(Soniq2faRecovery.loginKey(acct));
+                    if (previous != null && !previous.equalsIgnoreCase(address))
+                        Soniq2faRecovery.notice(acct, previous, "mail.addressChanged.subject", "mail.addressChanged.body",
+                                Map.of("account", acct.getName(), "address", RecoveryCodes.mask(address), "ip", Soniq2faRecovery.client(req)));
                     ZimbraLog.account.info("soniq2fa: %s verified a new recovery address", acct.getName());
                     json(resp, 200, state(acct));
                 }
@@ -241,7 +260,7 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                 }
                 case "email-codes" -> {
                     boolean wanted = "1".equals(req.getParameter("on"));
-                    if (wanted && (!on || !"verified".equals(acct.getAttr(Soniq2faRecovery.A_ADDRESS_STATUS))))
+                    if (wanted && (!on || !Soniq2faRecovery.confirmedAddress(acct)))
                         throw new UserError("address_first");
                     if (wanted && Soniq2faRecovery.onThisServer(acct.getAttr(Soniq2faRecovery.A_ADDRESS)))
                         throw new UserError("address_local");
@@ -308,9 +327,13 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
     /** Mailbox password, counted against the same per-account limit as codes. */
     private static void checkPassword(Provisioning prov, Account acct, String password) throws Exception {
         if (!TwoFa.THROTTLE.tryAcquire(acct.getId(), System.currentTimeMillis())) throw new UserError("too_many_attempts");
+        // as a login: a locked account is refused and a wrong password counts as a failed login
+        com.zimbra.cs.account.ldap.LdapLockoutPolicy lockout = new com.zimbra.cs.account.ldap.LdapLockoutPolicy(prov, acct);
+        if (lockout.isLockedOut()) throw new UserError("too_many_attempts");
         try {
             AuthMechanism.doZimbraAuth((LdapProv) prov, prov.getDomain(acct), acct, password == null ? "" : password, new HashMap<>());
         } catch (ServiceException e) {
+            lockout.failedLogin();
             throw new UserError("invalid_password");
         }
         TwoFa.THROTTLE.reset(acct.getId());
@@ -440,7 +463,7 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                 + ",\"reason\":" + (reason == null ? "null" : q(reason))
                 + ",\"enabled\":" + (secret != null && !secret.isEmpty()) + ",\"required\":" + required(acct)
                 + ",\"recovery\":" + "enabled".equalsIgnoreCase(acct.getAttr(A_RESET_PASSWORD))
-                + ",\"recoveryAddress\":" + q("verified".equals(acct.getAttr(Soniq2faRecovery.A_ADDRESS_STATUS))
+                + ",\"recoveryAddress\":" + q(Soniq2faRecovery.confirmedAddress(acct)
                         ? RecoveryCodes.mask(acct.getAttr(Soniq2faRecovery.A_ADDRESS)) : "")
                 + ",\"devices\":[" + devices + "]"
                 + ",\"smsAvailable\":" + smsEnabled(acct)

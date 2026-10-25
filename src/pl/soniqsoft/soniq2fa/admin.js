@@ -37,7 +37,7 @@
   function post(op, params) {
     var body = new URLSearchParams(params);
     body.set("op", op);
-    return fetch("", { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body }).then(handle);
+    return fetch(location.pathname, { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body }).then(handle);
   }
   function fail(e) { if (e.message !== "login") message(t("admin.err." + e.message)); }
 
@@ -148,7 +148,7 @@
       test.onclick = function () {
         out.textContent = "…";
         var body = new URLSearchParams({ op: "sms-test", gateway: g.name, phone: phone.value });
-        fetch("", { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body }).then(function (r) {
+        fetch(location.pathname, { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body }).then(function (r) {
           return r.json().then(function (j) {
             if (r.ok) { out.textContent = ""; message(t("admin.sms.sent", { phone: j.sent }), true); loadSms(); return; }
             out.textContent = "";

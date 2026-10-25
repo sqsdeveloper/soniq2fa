@@ -72,7 +72,7 @@ function userApi(req, res, q, form) {
       codeRequired: q.get("name") === "example.com" });
     return send(res, 200, fs.readFileSync(path.join(SRC, "page.html")), "text/html; charset=utf-8");
   }
-  posts.push(Object.fromEntries(form));
+  posts.push(Object.assign(Object.fromEntries(form), { _qs: q.toString() }));
   if (!req.headers["x-soniq2fa"]) return send(res, 403, { error: "rejected" });
   switch (form.get("op")) {
     case "start":
@@ -128,7 +128,7 @@ function recoverApi(req, res, q, form) {
     if (op === "i18n") return i18n(res);
     return send(res, 200, fs.readFileSync(path.join(SRC, "recover.html")), "text/html; charset=utf-8");
   }
-  posts.push(Object.fromEntries(form));
+  posts.push(Object.assign(Object.fromEntries(form), { _qs: q.toString() }));
   if (form.get("op") === "start" || form.get("op") === "send") return send(res, 200, { ok: true });
   if (form.get("mailCode") !== "87654321") return send(res, 400, { error: "invalid_mail_code" });
   if (form.get("code") !== "123456") return send(res, 400, { error: "invalid_code" });
@@ -147,7 +147,7 @@ function adminApi(req, res, q, form) {
     if (op === "accounts") return send(res, 200, { domain: q.get("domain"), domainId: "0f3c9a52-1d1e-4b7a-9c55-6a1e2f9b7d10", level: "plain", accounts: admin.accounts });
     return send(res, 200, fs.readFileSync(path.join(SRC, "admin.html")), "text/html; charset=utf-8");
   }
-  posts.push(Object.fromEntries(form));
+  posts.push(Object.assign(Object.fromEntries(form), { _qs: q.toString() }));
   const a = admin.accounts.find((x) => x.name === form.get("account"));
   switch (form.get("op")) {
     case "domain":
@@ -321,6 +321,29 @@ async function userPage(ctx, base) {
   await p3.waitForSelector("#unavailable:visible");
   check(!(await p3.isVisible("#start")), "page: not offered, cannot enable");
   await p3.close();
+}
+
+async function queryStringAttack(ctx, base) {
+  // a crafted link with the action in the query string: our pages must post the user's own action, never the link's
+  reset({ enabled: true, devices: ["iPhone"], backupLeft: 9 });
+  const page = await ctx.newPage();
+  await page.goto(base + "/service/extension/soniq2fa?op=disable");
+  await page.waitForSelector("#create:visible");
+  await page.fill("#label", "Laptop");
+  await page.click("#create");
+  await page.waitForSelector("#new-password:visible");
+  const p = posts[posts.length - 1];
+  check(p.op === "create" && p._qs === "", "page: a link with ?op=disable cannot swap the action (posts to the bare path)");
+  await page.close();
+  const adm = await ctx.newPage();
+  adm.on("dialog", (d) => d.accept());
+  await adm.goto(base + "/service/extension/soniq2fa-admin?op=domain&domain=example.com&level=off");
+  await adm.waitForSelector("#domains tr");
+  await adm.locator("#domains tr").nth(1).locator("input[type=checkbox]").check();
+  await adm.waitForFunction(() => document.querySelector("#msg.ok"));
+  const a = posts[posts.length - 1];
+  check(a.op === "domain-sms" && a._qs === "", "admin: a link with ?op=domain&level=off cannot swap the action");
+  await adm.close();
 }
 
 async function settingsModule(ctx, base) {
@@ -548,6 +571,7 @@ async function adminPage(ctx, base) {
       await settingsModule(ctx, base);
       await loginScript(ctx, base);
       await adminLogin(ctx, base);
+      await queryStringAttack(ctx, base);
       await recoverPage(ctx, base);
       await adminPage(ctx, base);
       await ctx.close();

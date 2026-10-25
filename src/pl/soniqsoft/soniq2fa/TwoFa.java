@@ -249,13 +249,26 @@ public final class TwoFa {
         static final int MAX = 5;
         static final long WINDOW_MS = 10 * 60_000;
         private final ConcurrentHashMap<String, long[]> tries = new ConcurrentHashMap<>();
+        private final int max;
+        private final long window;
 
-        /** false when the account already used up its attempts in the current window. */
+        Throttle() {
+            this(MAX, WINDOW_MS);
+        }
+
+        Throttle(int max, long window) {
+            this.max = max;
+            this.window = window;
+        }
+
+        /** false when the key already used up its attempts in the current window. */
         boolean tryAcquire(String id, long now) {
+            // keys made of client addresses are unbounded: drop expired windows before the map grows large
+            if (tries.size() > 10_000) tries.values().removeIf(f -> now - f[1] >= window);
             boolean[] ok = {false};
             tries.compute(id, (k, f) -> {
-                if (f == null || now - f[1] >= WINDOW_MS) f = new long[]{0, now};
-                if (f[0] >= MAX) return f;
+                if (f == null || now - f[1] >= window) f = new long[]{0, now};
+                if (f[0] >= max) return f;
                 ok[0] = true;
                 return new long[]{f[0] + 1, f[1]};
             });
@@ -270,6 +283,8 @@ public final class TwoFa {
     /** Shared by login and the self-service page, so a code used on one cannot be replayed on the other. */
     static final Replay REPLAY = new Replay();
     static final Throttle THROTTLE = new Throttle();
+    /** At most 50 wrong second factors a day per account, on top of 5 per 10 minutes: 720 guesses a day are too many. */
+    static final Throttle DAILY = new Throttle(50, 24 * 3_600_000L);
     /** Password checks of "send me a login code" (login page): separate, so strangers cannot block code checks. */
     static final Throttle SEND_THROTTLE = new Throttle();
 
@@ -330,6 +345,12 @@ public final class TwoFa {
         check(th.tryAcquire("a", Throttle.WINDOW_MS), "throttle new window");
         th.reset("a");
         check(th.tryAcquire("a", Throttle.WINDOW_MS + 1), "throttle reset");
+        Throttle day = new Throttle(2, 1000);
+        check(day.tryAcquire("x", 0) && day.tryAcquire("x", 1) && !day.tryAcquire("x", 2) && day.tryAcquire("x", 1000), "throttle own limits");
+        Throttle many = new Throttle(1, 10);
+        for (int i = 0; i < 10_002; i++) many.tryAcquire("k" + i, 0);
+        many.tryAcquire("late", 100);
+        check(many.tries.size() < 10, "throttle drops expired windows of a large map");
 
         String pw = newAppPassword();
         String[] stored = {hashAppPassword("thunderbird", pw), hashAppPassword("iphone", newAppPassword())};

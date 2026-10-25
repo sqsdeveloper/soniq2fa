@@ -70,6 +70,12 @@ final class RecoveryCodes {
         return ok ? p : null;
     }
 
+    /** A code for the key exists and has not expired. */
+    static boolean pending(String key) {
+        Pending p = CODES.get(key);
+        return p != null && System.currentTimeMillis() <= p.expires && p.tries < MAX_TRIES;
+    }
+
     /** Voids a pending code (its channel was removed, 2FA turned off or reset). */
     static void drop(String key) {
         CODES.remove(key);
@@ -164,8 +170,9 @@ final class RecoveryCodes {
         check(issue("t:3", -1, null) != null && check("t:3", "x", true) == null && !CODES.containsKey("t:3"), "recovery expiry");
         check(mayMail("m") && !mayMail("m"), "recovery mail once a minute");
         check(issue("t:4", 60_000, null, 6).matches("[0-9]{6}"), "login code format");
+        check(pending("t:4"), "code pending");
         drop("t:4");
-        check(!CODES.containsKey("t:4"), "login code dropped");
+        check(!CODES.containsKey("t:4") && !pending("t:4"), "login code dropped");
         check("Kod: 12\n\"x\" ż".equals(value("{\"k\": \"Kod: {c}\\n\\\"x\\\" \\u017c\"}", "k").replace("{c}", "12")), "i18n value");
         check(value("{\"a\": \"x\"}", "k") == null && "y".equals(value("{\"kk\": \"x\", \"k\" : \"y\"}", "k")), "i18n value lookup");
         // a long text on a small stack: the earlier regular expression overflowed here

@@ -15,8 +15,10 @@ else
   install -m 644 "$(dirname "$0")/settings/component.json" "$(dirname "$0")/settings/app.js" "$DIR/1/"
 fi
 chown -R zextras:zextras "$IRIS/soniq2fa-ui" 2>/dev/null || true
+TMP=$(mktemp "$IRIS/.components.XXXXXX")
 find "$IRIS" -maxdepth 3 -mindepth 3 -type f -name component.json -printf '%T@ %p\n' | sort -rn |
   awk '{ n = split($2, path, "/"); if (!seen[path[6]]++) print $2 }' |
-  xargs jq -s '{"components":.}' > "$IRIS/components.json.new"
-mv "$IRIS/components.json.new" "$IRIS/components.json"
+  xargs jq -s '{"components":.}' > "$TMP"
+chmod 644 "$TMP"
+mv "$TMP" "$IRIS/components.json"
 jq -r '.components[].name' "$IRIS/components.json"

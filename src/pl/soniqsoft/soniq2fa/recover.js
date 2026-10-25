@@ -18,7 +18,7 @@
   function post(op, params) {
     var body = new URLSearchParams(params);
     body.set("op", op);
-    return fetch("", { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body })
+    return fetch(location.pathname, { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body })
       .then(function (r) {
         return r.json().catch(function () { return { error: "server" }; }).then(function (j) {
           if (!r.ok) { var e = new Error(j.error || "server"); e.detail = j.detail; throw e; }

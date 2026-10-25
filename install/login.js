@@ -22,7 +22,7 @@
   "use strict";
   var BASE = "/service/extension/soniq2fa";
   var realFetch = window.fetch.bind(window);
-  var bundle = {}, fallback = {}, domains = {};
+  var bundle = {}, fallback = {}, domains = new Map();
   // loaded by the admin console login page too (data-admin): no self-service recovery link there
   var adminLogin = !!(document.currentScript && document.currentScript.hasAttribute("data-admin"));
 
@@ -52,12 +52,12 @@
     var d = String(user || "").split("@")[1];
     if (!d) return Promise.resolve({});
     d = d.toLowerCase();
-    if (!(d in domains)) {
-      domains[d] = realFetch(BASE + "?op=domain&name=" + encodeURIComponent(d), { credentials: "same-origin", cache: "no-store" })
+    if (!domains.has(d)) {
+      domains.set(d, realFetch(BASE + "?op=domain&name=" + encodeURIComponent(d), { credentials: "same-origin", cache: "no-store" })
         .then(function (r) { return r.ok ? r.json() : {}; })
-        .catch(function () { return {}; });
+        .catch(function () { return {}; }));
     }
-    return domains[d];
+    return domains.get(d);
   }
 
   function domainUsesTwoFactor(user) {
@@ -163,26 +163,27 @@
     });
   }
 
-  // POST with a fresh connection, one retry on a network error.
-  function post(input, init) {
+  // POST with a fresh connection; one retry on a network error, except for a request carrying a code: if the server
+  // had already taken it, the repeat would be refused as a used code and count as a second failed login.
+  function post(input, init, withCode) {
     return realFetch(BASE + "?op=domain&name=warmup", { credentials: "same-origin", cache: "no-store" })
       .catch(function () {})
       .then(function () { return realFetch(input, init); })
       .catch(function (e) {
-        if (e && e.name === "TypeError") return realFetch(input, init);
+        if (e && e.name === "TypeError" && !withCode) return realFetch(input, init);
         throw e;
       });
   }
 
   // Refused before authentication because of an invalidated session cookie: clear it and send once more.
-  function send(input, init) {
-    return post(input, init).then(function (res) {
+  function send(input, init, withCode) {
+    return post(input, init, withCode).then(function (res) {
       if (res.ok) return res;
       return res.clone().text().then(function (body) {
         if (!/auth credentials have expired|AUTH_EXPIRED/.test(body)) return res;
         return realFetch("/logout", { credentials: "same-origin", redirect: "manual", cache: "no-store" })
           .catch(function () {})
-          .then(function () { return post(input, init); });
+          .then(function () { return post(input, init, withCode); });
       }, function () { return res; });
     });
   }
@@ -271,7 +272,7 @@
       // Sends the password with the code; on a wrong code (newer server) asks again, telling the user why.
       function withCode(code) {
         field._content = password + code;
-        return send(input, Object.assign({}, init, { body: JSON.stringify(json) })).then(function (res) {
+        return send(input, Object.assign({}, init, { body: JSON.stringify(json) }), code !== "").then(function (res) {
           if (res.ok) { remember(user, code !== ""); return res; }
           if (!info.codeRequired) return res;
           return fault(res).then(function (f) {

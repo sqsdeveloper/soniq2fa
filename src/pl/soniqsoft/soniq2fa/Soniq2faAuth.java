@@ -124,7 +124,8 @@ public final class Soniq2faAuth extends ZimbraCustomAuth {
      */
     static String verifySecondFactor(Account acct, String secret, String code, boolean allowBackup) throws Exception {
         String id = acct.getId();
-        if (!TwoFa.THROTTLE.tryAcquire(id, System.currentTimeMillis())) return "too_many_attempts";
+        long now = System.currentTimeMillis();
+        if (!TwoFa.THROTTLE.tryAcquire(id, now) || !TwoFa.DAILY.tryAcquire(id, now)) return "too_many_attempts";
         String c = code == null ? "" : code.replace(" ", "").trim();
         if (c.matches("[0-9]{" + TwoFa.DIGITS + "}")) {
             long counter = TwoFa.matchTotp(secret, c, System.currentTimeMillis());
@@ -139,6 +140,7 @@ public final class Soniq2faAuth extends ZimbraCustomAuth {
             return "invalid_code";
         }
         TwoFa.THROTTLE.reset(id);
+        TwoFa.DAILY.reset(id);
         return null;
     }
 

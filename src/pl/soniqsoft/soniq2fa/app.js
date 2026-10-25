@@ -61,7 +61,7 @@
   function call(op, params) {
     var body = new URLSearchParams(params || {});
     body.set("op", op);
-    return fetch("", { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body })
+    return fetch(location.pathname, { method: "POST", credentials: "same-origin", headers: { "X-Soniq2fa": "1" }, body: body })
       .then(function (r) {
         if (r.status === 401) { top.location.href = "/"; throw new Error("login"); }
         return r.json().catch(function () { throw new Error("server"); }).then(function (j) {
@@ -181,11 +181,12 @@
   $("rekey").onclick = $("start").onclick;
 
   $("address-send").onclick = function () {
-    call("address", { address: $("address").value.trim() }).then(function (r) {
+    call("address", { address: $("address").value.trim(), password: $("address-password").value }).then(function (r) {
+      $("address-password").value = "";
       show("address-verify", true);
-      message(t("address.sent").replace("{address}", r.pending), true, "address-box");
+      message(t("address.sent", { address: r.pending }), true, "address-box");
       $("address-code").focus();
-    }).catch(fail("address-box", $("address")));
+    }).catch(function (e) { fail("address-box", e.message === "invalid_password" ? $("address-password") : $("address"))(e); });
   };
 
   $("address-confirm").onclick = function () {

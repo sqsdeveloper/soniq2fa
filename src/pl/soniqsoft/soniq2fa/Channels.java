@@ -50,7 +50,7 @@ import java.util.Properties;
  */
 final class Channels {
     static final String A_CHANNELS = "zimbraTwoFactorAuthTrustedDevices";
-    static final String EMAIL = "email", SMS_PREFIX = "sms:";
+    static final String EMAIL = "email", SMS_PREFIX = "sms:", RECOVERY_PREFIX = "recovery:";
     static final Path GATEWAY_FILE = Path.of("/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties");
     static final String DEFAULT = "default";
     private static final Map<String, long[]> HOURS = new java.util.concurrent.ConcurrentHashMap<>();
