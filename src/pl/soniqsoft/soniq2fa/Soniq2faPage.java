@@ -47,7 +47,9 @@ import javax.servlet.http.HttpServletResponse;
  * POST op=phone-remove    - removes the number
  * POST op=email-codes on (1|0), password for on - login codes to the verified recovery address on or off; refused
  *                  for an address in a domain of this server
- * Adding a channel asks for the mailbox password again: a stolen session alone cannot bind the thief's phone.
+ * Adding a channel, a device password or new backup codes, changing the recovery address and turning 2FA off ask for
+ * the mailbox password again (decision 2026-10-25, after a security review): a stolen session alone cannot mint lasting
+ * access. Removing a device needs no password, it only narrows access.
  *
  * POST needs the X-Soniq2fa header (a cross-site form cannot set it without a CORS preflight we never answer)
  * and a same-host Origin when the browser sends one. Turning 2FA on needs the mailbox password and the first code
@@ -133,44 +135,22 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
             switch (op == null ? "" : op) {
                 case "start" -> {
                     if (on && !required(acct)) throw new UserError("already_on");
-                    String s = TwoFa.newSecret();
-                    PENDING.put(acct.getId(), new String[]{s, Long.toString(System.currentTimeMillis())});
-                    String uri = TwoFa.otpauthUri(acct.getDomainName(), acct.getName(), s);
-                    json(resp, 200, "{\"secret\":" + q(s) + ",\"uri\":" + q(uri) + "}");
+                    json(resp, 200, startEnrolment(acct));
                 }
                 case "confirm" -> {
-                    String[] p = PENDING.get(acct.getId());
                     if (on && !required(acct)) throw new UserError("already_on");
-                    if (p == null || System.currentTimeMillis() - Long.parseLong(p[1]) > PENDING_MS)
-                        throw new UserError("qr_expired");
+                    pendingSecret(acct);
                     checkPassword(prov, acct, req.getParameter("password"));
-                    checkCode(acct, p[0], req.getParameter("code"));
-                    String[] codes = TwoFa.newBackupCodes();
-                    Map<String, Object> m = new HashMap<>();
-                    m.put(Soniq2faAuth.A_SECRET, p[0]);
-                    m.put(Soniq2faAuth.A_BACKUP_CODES, TwoFa.hashBackupCodes(codes));
-                    m.put(A_RESET_PASSWORD, "disabled");
-                    // every session opened so far, possibly with the password alone, ends here (as on a password change)
-                    int validity = acct.getAuthTokenValidityValue();
-                    acct.setAuthTokenValidityValue(validity == Integer.MAX_VALUE ? 0 : validity + 1, m);
-                    synchronized (Soniq2faAuth.BACKUP_LOCK) {
-                        prov.modifyAttrs(acct, m, false);
-                    }
-                    PENDING.remove(acct.getId());
-                    // ...except this one: a new session cookie, so webmail around the page keeps working
-                    // encode(req, resp, boolean) is a no-op in Carbonio; this is the call its AuthRequest makes
+                    String[] codes = finishEnrolment(prov, acct, req.getParameter("code"), Soniq2faRecovery.client(req));
+                    // every other session ended; this one gets a new cookie so webmail around the page keeps working
+                    // (encode(req, resp, boolean) is a no-op in Carbonio; this is the call its AuthRequest makes)
                     AuthProvider.getAuthToken(acct).encode(resp, false, com.zimbra.common.util.ZimbraCookie.secureCookie(req), false);
-                    ZimbraLog.account.info("soniq2fa: %s %s two-factor authentication (ip=%s)", acct.getName(), on ? "set up again" : "enabled",
-                            Soniq2faRecovery.client(req));
-                    if (Soniq2faRecovery.confirmedAddress(acct))
-                        Soniq2faRecovery.notice(acct, acct.getAttr(Soniq2faRecovery.A_ADDRESS), "mail.enabled.subject", "mail.enabled.body",
-                                Map.of("account", acct.getName(), "ip", Soniq2faRecovery.client(req)));
-                    Soniq2faAuth.dropImapConnections(acct, "2FA turned on");
                     json(resp, 200, withCodes(state(acct), codes));
                 }
                 case "disable" -> {
                     if (!on) throw new UserError("already_off");
                     if (required(acct)) throw new UserError("required");
+                    checkPassword(prov, acct, req.getParameter("password"));
                     Map<String, Object> m = new HashMap<>();
                     m.put(Soniq2faAuth.A_SECRET, "");
                     m.put(Soniq2faAuth.A_APP_PASSWORDS, "");
@@ -189,6 +169,7 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                     String label = req.getParameter("label");
                     if (label == null || !label.trim().matches("[\\p{L}0-9 ._-]{1,40}"))
                         throw new UserError("bad_label");
+                    checkPassword(prov, acct, req.getParameter("password"));
                     label = label.trim();
                     String[] existing = acct.getMultiAttr(Soniq2faAuth.A_APP_PASSWORDS);
                     if (existing.length >= TwoFa.MAX_DEVICES) throw new UserError("too_many_devices");
@@ -272,6 +253,7 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                 }
                 case "codes" -> {
                     if (!on) throw new UserError("enable_first");
+                    checkPassword(prov, acct, req.getParameter("password"));
                     String[] codes = TwoFa.newBackupCodes();
                     synchronized (Soniq2faAuth.BACKUP_LOCK) {
                         prov.modifyAttrs(acct, Map.of(Soniq2faAuth.A_BACKUP_CODES, TwoFa.hashBackupCodes(codes)), false);
@@ -310,7 +292,51 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
                 + "codes by SMS are off", Channels.GATEWAY_FILE);
     }
 
-    private static final class UserError extends Exception {
+    /** A new secret waiting for its first code (10 minutes), as JSON {secret, uri} for the QR code. */
+    static String startEnrolment(Account acct) {
+        String s = TwoFa.newSecret();
+        PENDING.put(acct.getId(), new String[]{s, Long.toString(System.currentTimeMillis())});
+        return "{\"secret\":" + q(s) + ",\"uri\":" + q(TwoFa.otpauthUri(acct.getDomainName(), acct.getName(), s)) + "}";
+    }
+
+    static String pendingSecret(Account acct) throws UserError {
+        String[] p = PENDING.get(acct.getId());
+        if (p == null || System.currentTimeMillis() - Long.parseLong(p[1]) > PENDING_MS) throw new UserError("qr_expired");
+        return p[0];
+    }
+
+    /**
+     * Turns 2FA on with the pending secret once the first code matches (the caller has checked the password): stores the
+     * secret (sealed) and new backup codes, turns Carbonio's recovery by mail off, ends every session of the account
+     * (zimbraAuthTokenValidityValue + 1, as a password change does) and its IMAP connections, mails a notice to the
+     * confirmed recovery address. Returns the backup codes, shown once.
+     */
+    static String[] finishEnrolment(Provisioning prov, Account acct, String code, String ip) throws Exception {
+        String secret = pendingSecret(acct);
+        boolean again = acct.getAttr(Soniq2faAuth.A_SECRET) != null && !acct.getAttr(Soniq2faAuth.A_SECRET).isEmpty();
+        checkCode(acct, secret, code);
+        String[] codes = TwoFa.newBackupCodes();
+        Map<String, Object> m = new HashMap<>();
+        m.put(Soniq2faAuth.A_SECRET, Secrets.forStorage(acct.getId(), secret));
+        m.put(Soniq2faAuth.A_BACKUP_CODES, TwoFa.hashBackupCodes(codes));
+        m.put(A_RESET_PASSWORD, "disabled");
+        int validity = acct.getAuthTokenValidityValue();
+        acct.setAuthTokenValidityValue(validity == Integer.MAX_VALUE ? 0 : validity + 1, m);
+        String since = Enforcement.marker(acct);
+        if (since != null) m.put("-" + Channels.A_CHANNELS, since);
+        synchronized (Soniq2faAuth.BACKUP_LOCK) {
+            prov.modifyAttrs(acct, m, false);
+        }
+        PENDING.remove(acct.getId());
+        ZimbraLog.account.info("soniq2fa: %s %s two-factor authentication (ip=%s)", acct.getName(), again ? "set up again" : "enabled", ip);
+        if (Soniq2faRecovery.confirmedAddress(acct))
+            Soniq2faRecovery.notice(acct, acct.getAttr(Soniq2faRecovery.A_ADDRESS), "mail.enabled.subject", "mail.enabled.body",
+                    Map.of("account", acct.getName(), "ip", ip));
+        Soniq2faAuth.dropImapConnections(acct, "2FA turned on");
+        return codes;
+    }
+
+    static final class UserError extends Exception {
         private static final long serialVersionUID = 1L;
 
         UserError(String m) {
@@ -319,13 +345,13 @@ public final class Soniq2faPage extends ExtensionHttpHandler {
     }
 
     /** First TOTP code from the app, confirming the enrolment. */
-    private static void checkCode(Account acct, String secret, String code) throws Exception {
+    static void checkCode(Account acct, String secret, String code) throws Exception {
         String error = Soniq2faAuth.verifySecondFactor(acct, secret, code, false);
         if (error != null) throw new UserError(error);
     }
 
     /** Mailbox password, counted against the same per-account limit as codes. */
-    private static void checkPassword(Provisioning prov, Account acct, String password) throws Exception {
+    static void checkPassword(Provisioning prov, Account acct, String password) throws Exception {
         if (!TwoFa.THROTTLE.tryAcquire(acct.getId(), System.currentTimeMillis())) throw new UserError("too_many_attempts");
         // as a login: a locked account is refused and a wrong password counts as a failed login
         com.zimbra.cs.account.ldap.LdapLockoutPolicy lockout = new com.zimbra.cs.account.ldap.LdapLockoutPolicy(prov, acct);

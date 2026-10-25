@@ -266,5 +266,17 @@
   "mail.addressChanged.subject": "Your password recovery address was changed",
   "mail.addressChanged.body": "The password recovery address of the mailbox {account} was changed to {address}, from {ip}. Codes to reset the password now go there.\n\nIf this was not you, contact your administrator at once.",
   "mail.enabled.subject": "Two-step verification turned on",
-  "mail.enabled.body": "Two-step verification was turned on (or set up again with a new phone) for the mailbox {account}, from {ip}. Other sessions of the mailbox were ended.\n\nIf this was not you, contact your administrator at once."
+  "mail.enabled.body": "Two-step verification was turned on (or set up again with a new phone) for the mailbox {account}, from {ip}. Other sessions of the mailbox were ended.\n\nIf this was not you, contact your administrator at once.",
+  "password.again": "Mailbox password",
+  "enroll.title": "Set up two-step verification",
+  "enroll.step1": "Your account requires two-step verification",
+  "enroll.step1.intro": "Your administrator requires two-step verification for this mailbox and the time to set it up after signing in has run out. Set it up here: enter your address and password, scan the QR code with an authenticator app and confirm with the code it shows.",
+  "enroll.showQr": "Show the QR code",
+  "enroll.done": "Two-step verification is on",
+  "enroll.done.intro": "Sign in again: after your password, enter the code from the app. Mail programs and phones now need device passwords — create them in webmail under Settings → Two-step verification.",
+  "enroll.err.invalid_login": "Wrong address or password.",
+  "enroll.err.not_required": "This account does not need setting up here. Sign in to webmail and use Settings → Two-step verification.",
+  "login.setupTitle": "Two-step verification required",
+  "login.setupIntro": "Your administrator requires two-step verification for this mailbox. Set it up now; it takes a minute and an authenticator app on your phone.",
+  "login.setupGo": "Set up two-step verification"
 }

@@ -82,12 +82,14 @@ function userApi(req, res, q, form) {
       Object.assign(st, { enabled: true, backupLeft: 10, recovery: false });
       return send(res, 200, Object.assign({}, st, { codes: CODES }));
     case "create":
+      if (form.get("password") !== "Haslo-2026") return send(res, 400, { error: "invalid_password" });
       st.devices.push(form.get("label"));
       return send(res, 200, { password: "wq7k-p3mz-8tdx-r2vn", label: form.get("label") });
     case "revoke":
       st.devices = st.devices.filter((d) => d !== form.get("label"));
       return send(res, 200, st);
     case "codes":
+      if (form.get("password") !== "Haslo-2026") return send(res, 400, { error: "invalid_password" });
       return send(res, 200, Object.assign({}, st, { backupLeft: 10, codes: CODES }));
     case "address":
       if (!/@.+\./.test(form.get("address") || "")) return send(res, 400, { error: "bad_address" });
@@ -113,6 +115,7 @@ function userApi(req, res, q, form) {
       st.emailCodes = form.get("on") === "1";
       return send(res, 200, st);
     case "disable":
+      if (form.get("password") !== "Haslo-2026") return send(res, 400, { error: "invalid_password" });
       if (st.required) return send(res, 400, { error: "required" });
       Object.assign(st, { enabled: false, devices: [], backupLeft: 0 });
       return send(res, 200, st);
@@ -124,12 +127,19 @@ let recovered = null;
 function recoverApi(req, res, q, form) {
   if (req.method === "GET") {
     const op = q.get("op");
-    if (op === "recover.js") return send(res, 200, fs.readFileSync(path.join(SRC, op)), "text/javascript");
+    if (op === "recover.js" || op === "enroll.js" || op === "qrcode.js") return send(res, 200, fs.readFileSync(path.join(SRC, op)), "text/javascript");
+    if (op === "enroll") return send(res, 200, fs.readFileSync(path.join(SRC, "enroll.html")), "text/html; charset=utf-8");
     if (op === "i18n") return i18n(res);
     return send(res, 200, fs.readFileSync(path.join(SRC, "recover.html")), "text/html; charset=utf-8");
   }
   posts.push(Object.assign(Object.fromEntries(form), { _qs: q.toString() }));
   if (form.get("op") === "start" || form.get("op") === "send") return send(res, 200, { ok: true });
+  if (form.get("op") === "enroll-start" || form.get("op") === "enroll-confirm") {
+    if (form.get("account") !== "nowy@example.com" || form.get("password") !== "Haslo-2026") return send(res, 400, { error: "invalid_login" });
+    if (form.get("op") === "enroll-start") return send(res, 200, { secret: SECRET, uri: `otpauth://totp/example.com:nowy%40example.com?secret=${SECRET}` });
+    if (form.get("code") !== "123456") return send(res, 400, { error: "invalid_code" });
+    return send(res, 200, { codes: CODES });
+  }
   if (form.get("mailCode") !== "87654321") return send(res, 400, { error: "invalid_mail_code" });
   if (form.get("code") !== "123456") return send(res, 400, { error: "invalid_code" });
   if ((form.get("password") || "").length < 8) return send(res, 400, { error: "password_policy", detail: "too short" });
@@ -228,6 +238,7 @@ const server = http.createServer((req, res) => {
       // as the extension answers: the code is asked for only after the right password
       const fault = (code, text) => send(res, 500, { Body: { Fault: { Reason: { Text: text }, Detail: { Error: { Code: code } } } } });
       const user = JSON.parse(raw).Body.AuthRequest.account._content;
+      if (user === "nowy@example.com" && pw === "Haslo-2026") return fault("account.TWO_FACTOR_SETUP_REQUIRED", "two-factor setup required");
       if (user.endsWith("@example.com") && pw === "Haslo-2026") return fault("account.TWO_FACTOR_AUTH_REQUIRED", "two-factor auth required");
       if (user.endsWith("@example.com") && pw.startsWith("Haslo-2026")) return fault("account.TWO_FACTOR_AUTH_FAILED", "authentication failed");
       return fault("account.AUTH_FAILED", "authentication failed");
@@ -301,6 +312,10 @@ async function userPage(ctx, base) {
   await shot(page, "page-channels", "#channels-box");
   await page.fill("#label", "Thunderbird – laptop");
   await page.click("#create");
+  await page.waitForSelector("#devices .msg.err");
+  check(await page.evaluate(() => document.activeElement.id) === "device-password", "page: a device password needs the mailbox password");
+  await page.fill("#device-password", "Haslo-2026");
+  await page.click("#create");
   await page.waitForSelector("#new-password:visible");
   check((await page.textContent("#new-pw")).includes("wq7k"), "page: device password shown once");
   await shot(page, "page-device");
@@ -330,6 +345,7 @@ async function queryStringAttack(ctx, base) {
   await page.goto(base + "/service/extension/soniq2fa?op=disable");
   await page.waitForSelector("#create:visible");
   await page.fill("#label", "Laptop");
+  await page.fill("#device-password", "Haslo-2026");
   await page.click("#create");
   await page.waitForSelector("#new-password:visible");
   const p = posts[posts.length - 1];
@@ -472,6 +488,31 @@ async function recoverPage(ctx, base) {
   await page.close();
 }
 
+async function requiredEnrolment(ctx, base) {
+  // 2FA required, grace period over: the login page sends the user to the enrolment page
+  soap = [];
+  const page = await ctx.newPage();
+  await page.goto(base + "/host/login");
+  await page.fill("#u", "nowy@example.com");
+  await page.fill("#p", "Haslo-2026");
+  await page.click("button");
+  await page.waitForSelector("[role=dialog] a[href*='op=enroll']");
+  check((await page.getAttribute("[role=dialog] a", "href")).endsWith("?op=enroll&account=nowy%40example.com")
+    && (await page.textContent("#out")) === "refused", "login: 2FA required after the grace period, enrolment page offered");
+  await page.goto(base + "/service/extension/soniq2fa-recover?op=enroll&account=nowy%40example.com");
+  await page.waitForFunction(() => document.getElementById("account").value === "nowy@example.com");
+  await page.fill("#password", "Haslo-2026");
+  await page.click("#start");
+  await page.waitForSelector("#qr svg");
+  await page.fill("#code", "123456");
+  await page.click("#confirm");
+  await page.waitForSelector("#done:visible");
+  check((await page.textContent("#codes")).includes(CODES[0]) && posts.some((x) => x.op === "enroll-confirm" && x._qs === ""),
+    "enrolment page: QR code, first code, backup codes");
+  await shot(page, "enroll");
+  await page.close();
+}
+
 async function adminLogin(ctx, base) {
   soap = [];
   const page = await ctx.newPage();
@@ -571,6 +612,7 @@ async function adminPage(ctx, base) {
       await settingsModule(ctx, base);
       await loginScript(ctx, base);
       await adminLogin(ctx, base);
+      await requiredEnrolment(ctx, base);
       await queryStringAttack(ctx, base);
       await recoverPage(ctx, base);
       await adminPage(ctx, base);

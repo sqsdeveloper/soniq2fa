@@ -209,6 +209,15 @@
 
   // Carbonio's recovery refused: offer ours (accounts with 2FA have Carbonio's turned off).
   function offerRecovery(email) {
+    offer("login.recoverTitle", "login.recoverIntro", "login.recoverGo", "/service/extension/soniq2fa-recover?account=" + encodeURIComponent(email));
+  }
+
+  // 2FA required and the grace period over (TWO_FACTOR_SETUP_REQUIRED): the enrolment page, with the address filled in.
+  function offerEnrolment(email) {
+    offer("login.setupTitle", "login.setupIntro", "login.setupGo", "/service/extension/soniq2fa-recover?op=enroll&account=" + encodeURIComponent(email));
+  }
+
+  function offer(titleKey, introKey, goKey, href) {
     var overlay = document.createElement("div");
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
@@ -217,14 +226,14 @@
     var box = document.createElement("div");
     box.style.cssText = "background:#fff;color:#333;border-radius:8px;padding:24px;width:min(92vw,400px);box-shadow:0 8px 32px rgba(0,0,0,.25)";
     var h = document.createElement("h2");
-    h.textContent = t("login.recoverTitle");
+    h.textContent = t(titleKey);
     h.style.cssText = "font-size:18px;margin:0 0 8px";
     var p = document.createElement("p");
-    p.textContent = t("login.recoverIntro");
+    p.textContent = t(introKey);
     p.style.cssText = "margin:0 0 16px;color:#6b7280;font-size:14px";
     var go = document.createElement("a");
-    go.textContent = t("login.recoverGo");
-    go.href = "/service/extension/soniq2fa-recover?account=" + encodeURIComponent(email);
+    go.textContent = t(goKey);
+    go.href = href;
     go.style.cssText = "display:inline-block;background:#2b73d2;color:#fff;border-radius:6px;padding:8px 16px;text-decoration:none;margin-right:8px";
     var close = document.createElement("button");
     close.type = "button";
@@ -265,7 +274,8 @@
       var sending = { user: user, password: password, info: info };
       function fault(res) {
         return res.clone().text().then(function (body) {
-          return /TWO_FACTOR_AUTH_REQUIRED/.test(body) ? "need" : /TWO_FACTOR_AUTH_FAILED/.test(body) ? "badCode"
+          return /TWO_FACTOR_SETUP_REQUIRED/.test(body) ? "setup" : /TWO_FACTOR_AUTH_REQUIRED/.test(body) ? "need"
+            : /TWO_FACTOR_AUTH_FAILED/.test(body) ? "badCode"
             : /AUTH_FAILED/.test(body) ? "failed" : "other";
         }, function () { return "other"; });
       }
@@ -276,6 +286,7 @@
           if (res.ok) { remember(user, code !== ""); return res; }
           if (!info.codeRequired) return res;
           return fault(res).then(function (f) {
+            if (f === "setup") { offerEnrolment(user); return cancelled(); }
             if (f === "badCode") return ask("need", t("err.invalid_code"));
             if (f === "need") return ask("need");
             return res;
@@ -294,6 +305,7 @@
         if (res.ok) return res;
         return fault(res).then(function (f) {
           // newer server: the code only after the right password; a wrong password goes to the form as usual
+          if (f === "setup") { offerEnrolment(user); return cancelled(); }
           if (info.codeRequired) return f === "need" ? ask("need") : res;
           return f === "failed" ? ask("retry") : res;
         });

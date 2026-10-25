@@ -363,6 +363,7 @@ public final class TwoFa {
         check("old".equals(matchAppPassword(new String[]{legacyApp}, "abcde-fghjk")), "app password legacy pbkdf2");
         check("thunderbird".equals(label(stored[0])), "label");
         RecoveryCodes.selftest();
+        Secrets.selftest();
         Channels.selftest();
         System.out.println("selftest OK");
     }
@@ -371,7 +372,7 @@ public final class TwoFa {
         if (!c) throw new AssertionError(what);
     }
 
-    /** CLI: selftest | secret <account> | code <secret> | apppass <label> */
+    /** CLI: selftest | secret <account> | code <secret> | apppass <label> | newkey | seal <key file> <account id> <secret> */
     public static void main(String[] a) throws Exception {
         switch (a.length > 0 ? a[0] : "") {
             case "selftest" -> selftest();
@@ -386,7 +387,14 @@ public final class TwoFa {
                 System.out.println(pw);
                 System.out.println(hashAppPassword(a[1], pw));
             }
-            default -> System.err.println("usage: selftest | secret <account> | code <secret> | apppass <label>");
+            case "newkey" -> System.out.println(Secrets.newKey());
+            case "seal" -> {
+                // "-": the secret from standard input, so it does not show up in the process list
+                String stored = ("-".equals(a[3]) ? new String(System.in.readAllBytes(), StandardCharsets.US_ASCII) : a[3]).trim();
+                System.out.println(stored.startsWith(Secrets.PREFIX) ? stored : Secrets.seal(
+                        Secrets.parseKey(java.nio.file.Files.readString(java.nio.file.Path.of(a[1]))), a[2], stored));
+            }
+            default -> System.err.println("usage: selftest | secret <account> | code <secret> | apppass <label> | newkey | seal <key file> <account id> <secret>");
         }
     }
 }

@@ -57,6 +57,16 @@ public final class Soniq2faAuth extends ZimbraCustomAuth {
         String secret = acct.getAttr(A_SECRET);
         if (secret == null || secret.isEmpty()) {
             AuthMechanism.doZimbraAuth(prov, domain, acct, password, ctx);
+            // 2FA required and the grace period over: the password alone is refused everywhere; webmail and the admin
+            // console learn why (TWO_FACTOR_SETUP_REQUIRED, the login page then offers the enrolment page)
+            if (Enforcement.overdue(acct, System.currentTimeMillis())) {
+                Object p = ctx.get(AuthContext.AC_PROTOCOL);
+                if ((p == null || p == AuthContext.Protocol.soap) && (p == null || !isMta(prov, ctx))) {
+                    ZimbraLog.account.info("soniq2fa: %s refused: 2FA required and not set up, grace period over", acct.getName());
+                    throw AccountServiceException.TWO_FACTOR_SETUP_REQUIRED();
+                }
+                throw deny(acct, ctx, "2FA required and not set up, grace period over (proto=" + p + ")");
+            }
             return;
         }
         if (domain.getBooleanAttr("zimbraAuthFallbackToLocal", false))
@@ -67,7 +77,7 @@ public final class Soniq2faAuth extends ZimbraCustomAuth {
         Object proto = ctx.get(AuthContext.AC_PROTOCOL);
         if (proto == null || proto == AuthContext.Protocol.soap) {
             if (proto == null || !isMta(prov, ctx)) {
-                secondFactorLogin(prov, domain, acct, secret, password, ctx);
+                secondFactorLogin(prov, domain, acct, plainSecret(acct, secret, ctx), password, ctx);
                 return;
             }
         } else if (proto == AuthContext.Protocol.http_basic) {
@@ -187,6 +197,16 @@ public final class Soniq2faAuth extends ZimbraCustomAuth {
         }
         if (n > 0) ZimbraLog.account.info("soniq2fa: closed %d IMAP connection(s) of %s (%s)", n, acct.getName(), why);
         return n;
+    }
+
+    /** The Base32 secret, decrypted when it is stored sealed (Secrets); a secret that cannot be opened refuses the login. */
+    static String plainSecret(Account acct, String stored, Map<String, Object> ctx) throws AuthFailedServiceException {
+        try {
+            return Secrets.read(acct.getId(), stored);
+        } catch (Exception e) {
+            ZimbraLog.account.error("soniq2fa: cannot read the TOTP secret of %s: %s", acct.getName(), e.getMessage());
+            throw deny(acct, ctx, "TOTP secret cannot be read");
+        }
     }
 
     /** Generic failure for the client; the reason is logged by the mailbox, not returned. */

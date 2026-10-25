@@ -35,6 +35,8 @@ import javax.servlet.http.HttpServletResponse;
  * POST op=finish  account, mailCode, code, password - checks the mailed code (5 attempts, 15 minutes), then the second
  *                 factor (rate-limited as at sign-in, a backup code is used up), then sets the password under the
  *                 Carbonio password policy, lifts a lockout and mails a notice to the recovery address.
+ * POST op=enroll-start, op=enroll-confirm  account, password (and code) - setting up 2FA without a session, for an
+ *                 account that must use it after its grace period (Enforcement); GET ?op=enroll serves the page
  * POST op=send    account, password, channel (sms|email) - from the code dialog of the login page: after the mailbox
  *                 password, sends a 6-digit login code (5 minutes, single use) by SMS to the confirmed number or to the
  *                 recovery address, when the account turned that channel on (Channels). The password check follows the
@@ -64,7 +66,7 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
     public void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         Soniq2faPage.noCache(resp);
         String op = req.getParameter("op");
-        if ("recover.js".equals(op)) {
+        if ("recover.js".equals(op) || "enroll.js".equals(op) || "qrcode.js".equals(op)) {
             Soniq2faPage.resource(resp, op, "text/javascript; charset=utf-8");
             return;
         }
@@ -76,7 +78,7 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
         }
         resp.setHeader("Content-Security-Policy",
                 "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
-        Soniq2faPage.resource(resp, "recover.html", "text/html; charset=utf-8");
+        Soniq2faPage.resource(resp, "enroll".equals(op) ? "enroll.html" : "recover.html", "text/html; charset=utf-8");
     }
 
     @Override
@@ -100,6 +102,15 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
             } else if ("send".equals(op)) {
                 sendLoginCode(req.getParameter("account"), req.getParameter("password"), req.getParameter("channel"), req);
                 Soniq2faPage.json(resp, 200, "{\"ok\":true}");
+            } else if ("enroll-start".equals(op)) {
+                Account a = enrolment(req.getParameter("account"), req.getParameter("password"), req);
+                Soniq2faPage.json(resp, 200, Soniq2faPage.startEnrolment(a));
+            } else if ("enroll-confirm".equals(op)) {
+                Account a = enrolment(req.getParameter("account"), req.getParameter("password"), req);
+                String[] codes = Soniq2faPage.finishEnrolment(Provisioning.getInstance(), a, req.getParameter("code"), client(req));
+                StringBuilder b = new StringBuilder();
+                for (String c : codes) b.append(b.length() == 0 ? "" : ",").append(Soniq2faPage.q(c));
+                Soniq2faPage.json(resp, 200, "{\"codes\":[" + b + "]}");
             } else if ("finish".equals(op)) {
                 String error = finish(req.getParameter("account"), req.getParameter("mailCode"), req.getParameter("code"),
                         req.getParameter("password"), req);
@@ -108,6 +119,8 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
             } else {
                 Soniq2faPage.json(resp, 400, "{\"error\":\"rejected\"}");
             }
+        } catch (Soniq2faPage.UserError e) {
+            Soniq2faPage.json(resp, 400, "{\"error\":" + Soniq2faPage.q(e.getMessage()) + "}");
         } catch (PolicyError e) {
             Soniq2faPage.json(resp, 400, "{\"error\":\"password_policy\",\"detail\":" + Soniq2faPage.q(e.getMessage()) + "}");
         } catch (Exception e) {
@@ -176,6 +189,32 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
         String to = a.getAttr(A_ADDRESS);
         mailLater(a, to, "mail.code.subject", "mail.code.body", Map.of("code", code, "account", a.getName(), "minutes", "15"));
         ZimbraLog.account.info("soniq2fa: recovery code for %s sent to the recovery address (ip=%s)", a.getName(), ip);
+    }
+
+    /**
+     * Enrolment without a session, for an account that must use 2FA and can no longer sign in with the password alone
+     * (Enforcement): the mailbox password under the Carbonio lockout policy and a limit per account and client, then
+     * the same steps as on the self-service page. "not_required" is said only to whoever knows the password.
+     */
+    private static Account enrolment(String name, String password, HttpServletRequest req) throws Exception {
+        Provisioning prov = Provisioning.getInstance();
+        Account a = name == null || name.isBlank() ? null : prov.getAccountByName(name.trim());
+        if (a == null) throw new Soniq2faPage.UserError("invalid_login");
+        LdapLockoutPolicy lockout = new LdapLockoutPolicy(prov, a);
+        if (lockout.isLockedOut() || !TwoFa.SEND_THROTTLE.tryAcquire("enrol|" + a.getId() + "|" + proxyPeer(req), System.currentTimeMillis()))
+            throw new Soniq2faPage.UserError("too_many_attempts");
+        try {
+            AuthMechanism.doZimbraAuth((LdapProv) prov, prov.getDomain(a), a, password == null ? "" : password, new HashMap<>());
+        } catch (ServiceException wrongPassword) {
+            lockout.failedLogin();
+            ZimbraLog.account.info("soniq2fa: enrolment for %s refused, wrong password (ip=%s)", a.getName(), client(req));
+            throw new Soniq2faPage.UserError("invalid_login");
+        }
+        String secret = a.getAttr(Soniq2faAuth.A_SECRET);
+        if ((secret != null && !secret.isEmpty()) || Soniq2faPage.unavailable(a) != null || !Soniq2faPage.required(a)
+                || !"active".equals(a.getAttr("zimbraAccountStatus", "active")))
+            throw new Soniq2faPage.UserError("not_required");
+        return a;
     }
 
     static String loginKey(Account a) {
@@ -292,7 +331,7 @@ public final class Soniq2faRecovery extends ExtensionHttpHandler {
         } catch (ServiceException e) {
             throw new PolicyError(e.getMessage());
         }
-        String error = Soniq2faAuth.verifySecondFactor(a, a.getAttr(Soniq2faAuth.A_SECRET), code, true);
+        String error = Soniq2faAuth.verifySecondFactor(a, Secrets.read(a.getId(), a.getAttr(Soniq2faAuth.A_SECRET)), code, true);
         if (error != null) return error;
         try {
             prov.setPassword(a, password, true);

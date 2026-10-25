@@ -8,6 +8,8 @@
 #   soniq2fa-check.sh login                   1 = all three pages carry their script (webmail login, admin console login,
 #                                             admin console), 0 = a tag or file is missing (a package upgrade replaced
 #                                             index.html and the apt hook did not run)
+#   soniq2fa-check.sh key                     1 = TOTP secret key readable by zextras, 0 = present but unreadable,
+#                                             2 = no key (secrets stored in plain text); sealed secrets need it to sign in
 #   soniq2fa-check.sh sms                     1 = SMS gateway file readable by zextras, 0 = present but unreadable
 #                                             (SMS hidden for everyone), 2 = no file (SMS not configured)
 # A missing extension on a domain with custom:soniq2fa means nobody in that domain can sign in.
@@ -29,8 +31,8 @@ case "${1:-}" in
       && grep -qF 'soniq2fa-admin-link.js' "$ADMIN_INDEX" 2>/dev/null && [ -f /opt/zextras/admin/iris/soniq2fa-admin-link.js ]
     then echo 1; else echo 0; fi
     ;;
-  sms)
-    F=/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties
+  key|sms)
+    if [ "$1" = key ]; then F=/opt/zextras/lib/ext/soniq2fa/totp.key; else F=/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties; fi
     if [ ! -e "$F" ]; then echo 2
     else
       # the agent runs as zabbix: judge by owner, group and mode instead of reading as zextras

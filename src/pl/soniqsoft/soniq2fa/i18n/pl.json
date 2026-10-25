@@ -266,5 +266,17 @@
   "mail.addressChanged.subject": "Zmieniono adres do odzyskiwania hasła",
   "mail.addressChanged.body": "Adres do odzyskiwania hasła skrzynki {account} zmieniono na {address}, z adresu {ip}. Kody do zmiany hasła trafiają teraz tam.\n\nJeśli to nie Ty, natychmiast skontaktuj się z administratorem.",
   "mail.enabled.subject": "Włączono weryfikację dwuetapową",
-  "mail.enabled.body": "Dla skrzynki {account} włączono weryfikację dwuetapową (albo skonfigurowano ją od nowa z nowym telefonem), z adresu {ip}. Pozostałe sesje skrzynki zostały zakończone.\n\nJeśli to nie Ty, natychmiast skontaktuj się z administratorem."
+  "mail.enabled.body": "Dla skrzynki {account} włączono weryfikację dwuetapową (albo skonfigurowano ją od nowa z nowym telefonem), z adresu {ip}. Pozostałe sesje skrzynki zostały zakończone.\n\nJeśli to nie Ty, natychmiast skontaktuj się z administratorem.",
+  "password.again": "Hasło do poczty",
+  "enroll.title": "Konfiguracja weryfikacji dwuetapowej",
+  "enroll.step1": "Twoje konto wymaga weryfikacji dwuetapowej",
+  "enroll.step1.intro": "Administrator wymaga weryfikacji dwuetapowej dla tej skrzynki, a czas na jej konfigurację po zalogowaniu minął. Skonfiguruj ją tutaj: podaj adres i hasło, zeskanuj kod QR aplikacją uwierzytelniającą i potwierdź kodem, który pokaże.",
+  "enroll.showQr": "Pokaż kod QR",
+  "enroll.done": "Weryfikacja dwuetapowa włączona",
+  "enroll.done.intro": "Zaloguj się ponownie: po haśle wpisz kod z aplikacji. Programy pocztowe i telefony potrzebują teraz haseł urządzeń — utworzysz je w poczcie w Ustawieniach → Weryfikacja dwuetapowa.",
+  "enroll.err.invalid_login": "Nieprawidłowy adres lub hasło.",
+  "enroll.err.not_required": "To konto nie wymaga konfiguracji tutaj. Zaloguj się do poczty i skorzystaj z Ustawień → Weryfikacja dwuetapowa.",
+  "login.setupTitle": "Wymagana weryfikacja dwuetapowa",
+  "login.setupIntro": "Administrator wymaga weryfikacji dwuetapowej dla tej skrzynki. Skonfiguruj ją teraz; zajmie to minutę i potrzebna jest aplikacja uwierzytelniająca w telefonie.",
+  "login.setupGo": "Skonfiguruj weryfikację dwuetapową"
 }

@@ -32,13 +32,13 @@ The self-service page is in webmail Settings, *Two-step verification* (also at
 - 10 single-use backup codes, shown once; new codes void the old ones;
 - device passwords, one per mail program or phone, shown once and revocable one by one;
 - optional codes by SMS (when the server has an SMS gateway) and to the confirmed recovery address, which the code
-  dialog of the login page sends on request — for moments without the app;
+  dialog of the login page sends on request, for moments without the app at hand;
 - turning 2FA off, or, where 2FA is required, setting it up again with a new phone.
 
-After signing in with the second factor, the page asks for no further codes: a webmail session of an enrolled
-account was itself opened with the code. The trade-off is deliberate — whoever holds such a session (an unlocked
-computer, a stolen cookie) can create a device password, which keeps working after the owner signs out. Sign out on
-shared computers, and revoke unknown devices on the page.
+The page asks for no further codes, since a webmail session of an enrolled account was itself opened with one. It
+does ask for the mailbox password again before anything that weakens 2FA: a new device password, new backup codes,
+turning 2FA off, changing the recovery address or the SMS and e-mail channels. Someone at an unlocked computer can't
+do any of that. Still, sign out on shared computers and revoke devices you don't recognise.
 
 Accounts that have not turned 2FA on keep signing in with their password, so a domain can be switched
 over gradually.
@@ -78,7 +78,8 @@ code changes nothing: 2FA is on only after the first correct code.
 ### 4. Save the backup codes
 
 The page shows 10 single-use backup codes once. Download or copy them and keep them away from the phone (a password
-manager, a printout). They replace the phone when it is not at hand. **Generate new codes** voids the old ones.
+manager, a printout). They replace the phone when it is not at hand. **Generate new codes** asks for your password and
+voids the old ones.
 
 ![Two-step verification on, with the backup codes](docs/page-on-en.png)
 
@@ -86,8 +87,9 @@ manager, a printout). They replace the phone when it is not at hand. **Generate 
 
 From now on Thunderbird, Outlook, Apple Mail, mail, calendar and contacts on the phone, and the calendar and contacts
 accounts in macOS no longer accept your regular password. Under **Device passwords** type a name (for example
-*Thunderbird – laptop*), click **Create password** and enter the password shown in that program instead of your
-regular one. It is shown only once; a lost device is removed from the list without touching the others.
+*Thunderbird – laptop*) and your mailbox password, click **Create password** and enter the password shown in that
+program instead of your regular one. It is shown only once; a lost device is removed from the list without touching
+the others.
 
 ![A new device password with the server settings](docs/page-device-en.png)
 
@@ -141,18 +143,18 @@ ask your administrator to turn it off unless it was intended.
   (`https://mail.example.com/service/extension/soniq2fa-recover`). Enter your address; a code goes to your recovery
   address. Then enter that code, the code from the app (or a backup code) and a new password. Without a recovery
   address, the administrator sets a new password; 2FA stays on.
+- Changing the password in the mail settings: enter the current password immediately followed by the code,
+  without spaces.
 
 | Step 1 | Step 2 |
 |---|---|
 | ![Password recovery, address](docs/recover-start-en.png) | ![Password recovery, codes and new password](docs/recover-codes-en.png) |
-- Changing the password in the mail settings: enter the current password immediately followed by the code,
-  without spaces.
 
 ## Security model
 
 - Every path needs something beyond the mailbox password, and a device password never opens a webmail session.
-- Turning 2FA on ends every webmail and admin console session of the account opened so far — possibly with the
-  password alone — the way a password change does (`zimbraAuthTokenValidityValue` + 1); the session that turns it on
+- Turning 2FA on ends every webmail and admin console session of the account opened so far, possibly with the
+  password alone, the way a password change does (`zimbraAuthTokenValidityValue` + 1); the session that turns it on
   gets a new cookie and continues.
 - IMAP checks credentials only at login. Turning 2FA on, revoking a device password, an admin reset and a password
   recovery therefore close the account's open IMAP connections; mail clients with a valid device password reconnect
@@ -162,7 +164,7 @@ ask your administrator to turn it off unless it was intended.
 - Refusals reach the client as a generic "authentication failed", with one deliberate exception for SOAP (webmail,
   admin console): the right password without a code, or with a wrong one, is answered `TWO_FACTOR_AUTH_REQUIRED` /
   `TWO_FACTOR_AUTH_FAILED`, so the login page asks for the code only after the right password. Password guessing
-  stays limited by the Carbonio lockout policy, which counts these answers as failed logins. The reason of every
+  stays limited by the Carbonio lockout policy, which counts these answers as failed logins. The reason for every
   refusal is written to the mailbox log.
 - SMTP AUTH reaches the mailbox as SOAP from `saslauthd`. It is recognised by the local port of the connection
   (`zimbraMtaAuthPort`, 7073 by default, not proxied by nginx), by the peer address (loopback, a local address
@@ -187,9 +189,13 @@ ask your administrator to turn it off unless it was intended.
   A sent code has 6 digits, works once within 5 minutes and counts against the same attempt limit as app codes.
   These channels are weaker than the app (SIM swap, a shared private mailbox); the e-mail channel turns the
   recovery address into a second factor, so the page says to use it only for an address the user alone reads.
+- Creating a device password, getting new backup codes and turning 2FA off also ask for the mailbox password.
+  Someone who finds a webmail session left open can't use it to weaken the account's 2FA.
 - Device passwords (~99 bits) and backup codes (~49 bits) are random and stored as salted SHA-256.
-  The TOTP secret is stored in `zimbraTwoFactorAuthSecret` in plain form (not returned to clients, but present
-  in LDAP and its backups).
+  The TOTP secret in `zimbraTwoFactorAuthSecret` is encrypted (AES-256-GCM, bound to the account id) with a key kept
+  outside LDAP in `/opt/zextras/lib/ext/soniq2fa/totp.key`, so LDAP dumps and backups alone don't give it away.
+  Back the key up together with the server: without it, encrypted secrets can't be read and those users can't sign in
+  until an admin resets their 2FA.
 - The self-service page validates the session like the rest of Carbonio (expiry, logout, password change,
   account status), requires a custom request header and a same-host `Origin`, sends a strict
   Content-Security-Policy and refuses delegated ("log in as") sessions, except an admin's own mailbox opened from the
@@ -313,34 +319,40 @@ carbonio prov md example.com zimbraAuthMech "custom:soniq2fa required"       # r
 Only accounts with 2FA offered see the Settings entry. Where 2FA is required and not set up yet, the first webmail
 session opens the self-service page over the whole window, and webmail becomes usable once 2FA is on and the
 backup codes are shown. A required account cannot turn 2FA off; after changing phones it sets 2FA up again, which
-replaces the secret and the backup codes and keeps the device passwords. Until the setup is done, the account
-signs in with the password alone everywhere, so mail programs keep working until the user moves them to device
-passwords.
+replaces the secret and the backup codes and keeps the device passwords.
+
+The server enforces the requirement too. A required account that hasn't set 2FA up gets a grace period, 7 days by
+default from its first sign-in after the requirement, in which the password alone still works everywhere (so mail
+programs keep working while the user moves them to device passwords). After that the password alone is refused in
+webmail, the admin console and mail programs. The login page then links to a setup page
+(`/service/extension/soniq2fa-recover?op=enroll`) where the user enters the address and password, scans the QR code,
+confirms it with the first code and gets the backup codes. The period is set with `required.graceDays=7` (0 turns it
+off) in the gateway file, `/opt/zextras/lib/ext/soniq2fa/soniq2fa.properties`. The start of the period is kept in
+`zimbraTwoFactorAuthTrustedDevices` as `required-since:<ms>`; an admin reset starts it again.
 
 ### Login page dialog
 
 The Carbonio CE login page has no step for a second factor without the commercial `/zx/auth` service. soniq2fa
 adds one without modifying the page itself: a small script (`install/login.js`, installed as
-`/static/login/soniq2fa-login.js`), loaded by the login page before its own bundle, wraps `fetch`. When the form sends `AuthRequest` (or `ChangePasswordRequest`) for a domain that uses
-`custom:soniq2fa`, the script asks for the code in a dialog and appends it to the password. The dialog opens
-before the request when this browser remembers the user as enrolled (the self-service page and every sign-in with
+`/static/login/soniq2fa-login.js`), loaded by the login page before its own bundle, wraps `fetch`. When the form
+sends `AuthRequest` (or `ChangePasswordRequest`) for a domain that uses `custom:soniq2fa`, the script asks for the code in a dialog
+and appends it to the password. The dialog opens before the request when this browser remembers the user as enrolled (the self-service page and every sign-in with
 a code store a hint in the browser), and otherwise only when the server answers `TWO_FACTOR_AUTH_REQUIRED`: the
 handler answers a wrong password with `AUTH_FAILED`, the right password without a code with
 `TWO_FACTOR_AUTH_REQUIRED` and with a wrong code with `TWO_FACTOR_AUTH_FAILED`. Users without 2FA, and anyone with a
 wrong password, never see the dialog. This tells a caller whether the password is right before the second factor;
 the Carbonio lockout policy (keep `zimbraPasswordLockoutEnabled TRUE`) counts all three answers as failed logins, and
 mail protocols still take device passwords only. On a new device the first attempt without the code counts as one
-failed login. Other domains log in
-exactly as before. If the extension is missing, the domain check fails and the page
-logs in as usual. Being a plain file, the script is updated without restarting the mailbox.
+failed login. Other domains log in exactly as before. If the extension is missing, the domain check fails and the
+page logs in as usual. Being a plain file, the script is updated without restarting the mailbox.
 
 The script also fixes two problems of the CE login page that 2FA makes frequent, for every account:
 
 - a browser that still holds an invalidated session cookie (after a password change, or turning 2FA on or off) is
-  refused before the password is checked ("auth credentials have expired") — the script clears the cookie through
+  refused before the password is checked ("auth credentials have expired"); the script clears the cookie through
   Carbonio's own `/logout` and sends the login once more;
 - after the code dialog the connection may have been closed by the server while idle, and Safari fails the POST
-  with "Load failed" — the script opens a fresh connection first and retries once on a network error.
+  with "Load failed"; the script opens a fresh connection first and retries once on a network error.
 
 The page learns whether a domain uses soniq2fa from `?op=domain&name=<domain>`; it reveals nothing about accounts.
 
@@ -390,12 +402,15 @@ zabbix_agent2 -R userparameter_reload
   0 a tag disappeared from an `index.html` (a package upgrade replaced it and the apt hook did not run).
 - `soniq2fa.sms` — 1 the SMS gateway file is readable by the mailbox, 0 it exists but is unreadable (SMS is hidden for
   everyone), 2 SMS is not configured.
+- `soniq2fa.key` — 1 the TOTP secret key is readable by the mailbox, 0 it exists but is unreadable (users with
+  encrypted secrets can't sign in), 2 there is no key (new secrets are stored in plain text, and
+  already encrypted ones can't be read).
 
 ## Administration
 
 ### Administration page
 
-`https://mail.example.com:6071/service/extension/soniq2fa-admin` — open it on the admin console port after signing
+`https://mail.example.com:6071/service/extension/soniq2fa-admin`. Open it on the admin console port after signing
 in to the admin console; it uses that session and is limited to global admins. Carbonio CE's admin console loads no
 external modules, so the page stands on its own; the console only gets a **2FA** button in the bottom right corner
 that opens it (see *Login page dialog*). It shows:
@@ -415,7 +430,8 @@ Typical tasks:
   *Available* to *yes* for them. Nobody else sees anything.
 - **Offer it to everyone.** Set the domain to *available to all*.
 - **Require it.** *Required: yes* for an account, or *required for all* for the domain. Each affected user gets the
-  setup window at the next webmail sign-in; until then, their mail programs keep working with the password.
+  setup window at the next webmail sign-in. During the grace period mail programs keep working with the password;
+  after it the password alone is refused.
 - **A user lost the phone and the backup codes.** *Reset 2FA*, then the user sets it up again and creates new
   device passwords.
 - **A user forgot the password.** Users with a confirmed recovery address do it themselves (mailed code plus the code
@@ -428,14 +444,14 @@ Typical tasks:
 address (`zimbraPrefPasswordRecoveryAddress`, the attribute Carbonio uses, set on the self-service page with a mailed
 confirmation code) set a new password with a code mailed to that address **and** the code from the app or a backup
 code. The answer to the first step is the same for every account and the mail is sent in the background, so the page
-does not tell who has 2FA. A mailed code is valid 15 minutes and 5 tries; an account gets at most one mail a minute and
-5 an hour; the second factor is rate-limited as at sign-in. The new password follows the Carbonio password policy, a
-lockout is lifted, and a notice goes to the recovery address. Every step is logged with the client address.
+does not tell who has 2FA. A mailed code is valid for 15 minutes and 5 tries, an account gets at most one mail a
+minute and 5 an hour, and the second factor is rate-limited as at sign-in. The new password follows the
+Carbonio password policy, a lockout is lifted, and a notice goes to the recovery address. Every step is logged with the client address.
 
-Turning 2FA on sets Carbonio's own password recovery off on the account. Turning recovery back on for an account with 2FA
-asks first, because a mailed recovery code signs in without the second factor; the user then sees a warning on the
-self-service page, and every login of that account is logged as an error. Every change made on the page is logged
-in `mailbox.log` with the admin's name.
+Turning 2FA on turns Carbonio's own password recovery off for the account. Turning it back on from the administration
+page for an account with 2FA asks first, because a mailed recovery code signs in without the second factor; the user
+then sees a warning on the self-service page, and every login of that account is logged as an error. Every change made
+on the administration page is logged in `mailbox.log` with the admin's name.
 
 ### Codes by SMS and e-mail
 
@@ -470,8 +486,8 @@ Editing the file with `sed -i` or an editor that writes a new file resets the gr
 read it, SMS disappears and `mailbox.log` says so (`cannot read it`). Run the `chown` again after such an edit.
 
 Numbers are accepted only with the prefixes in `sms.countries` (default `+48`; e.g. `sms.countries=+48,+420`), against
-SMS pumping to premium or foreign numbers. Those keys make the **default gateway**. A domain can have its own gateway (another SMSAPI account, sender or limit)
-by overriding any key as `domain.<domain>.sms.<key>`; with its own `sms.token` it is a separate gateway with its own
+SMS pumping to premium or foreign numbers. Those keys make the **default gateway**. A domain can have its own
+gateway (another SMSAPI account, sender or limit) by overriding any key as `domain.<domain>.sms.<key>`; with its own `sms.token` it is a separate gateway with its own
 hourly limit, otherwise it uses the default one with the overridden values:
 
 ```properties
@@ -544,12 +560,12 @@ is shown there and logged in `mailbox.log` (the answer without phone numbers). T
 (`domain.<domain>.sms.provider=http`, …), so domains can use different providers. Gateways that do not speak HTTP
 (SMPP, GSM modems) need an HTTP bridge in front of them.
 
-The administration page shows every gateway read-only — state, sender, countries, messages this hour against the
-limit, whether the token is set (never the token), the domains using it — and can check the SMSAPI points and send a
-test SMS. The file is read at every send, so changes need no restart; without it the
-SMS option stays hidden. An account gets at most one login code a minute and five an hour, and as many phone
-confirmations; each gateway sends at most its own `sms.maxPerHour` SMS an hour. Every send, and every refusal of the gateway with its answer, is logged in `mailbox.log`
-(`soniq2fa: login code`, `soniq2fa: SMS`).
+The administration page shows every gateway read-only (state, sender, countries, messages this hour against the
+limit, whether the token is set but never the token, the domains using it) and can check the SMSAPI points and send
+a test SMS. The file is read at every send, so changes need no restart; without it the SMS option stays hidden. An
+account gets at most one login code a minute and five an hour, and as many phone confirmations; each gateway sends at
+most its own `sms.maxPerHour` SMS an hour. Every send, and every refusal of the gateway with its answer, is logged in
+`mailbox.log` (`soniq2fa: login code`, `soniq2fa: SMS`).
 
 ### Command line
 
@@ -572,20 +588,31 @@ EOF
 carbonio prov fc -a account user@example.com
 ```
 
-Log lines are written to `mailbox.log` with the prefix `soniq2fa:` — enabled, disabled, device password
+Log lines are written to `mailbox.log` with the prefix `soniq2fa:`: enabled, disabled, device password
 created/revoked/accepted, backup code used, and every refusal with its reason. `audit.log` records the refused
 login as usual.
 
 To turn the extension off for a domain: `carbonio prov md example.com zimbraAuthMech ""`. Enrolled users keep
 their settings and get them back if it is turned on again.
 
-To remove it, run `login-inject.sh remove`, delete the apt hook, clear `zimbraAuthMech` on **every** domain that uses it — a domain still pointing to
-`custom:soniq2fa` after the extension is gone lets nobody sign in — then delete `/opt/zextras/lib/ext/soniq2fa`
-and restart the mailbox.
+To remove it, run `login-inject.sh remove`, delete the apt hook and clear `zimbraAuthMech` on **every** domain that
+uses it (a domain still pointing to `custom:soniq2fa` after the extension is gone lets nobody sign in). Then delete
+`/opt/zextras/lib/ext/soniq2fa` and restart the mailbox. Keep a copy of `totp.key` if you may install it again.
 
 ## Upgrading soniq2fa
 
-From 1.0.0: recovery addresses confirmed with 1.0.0 have to be confirmed once more on the self-service page. Until
+Coming from 1.0.0, create the key that encrypts TOTP secrets, once, as root:
+
+```bash
+(umask 077; head -c 32 /dev/urandom | base64 -w0 > /opt/zextras/lib/ext/soniq2fa/totp.key)
+chown root:zextras /opt/zextras/lib/ext/soniq2fa/totp.key && chmod 640 /opt/zextras/lib/ext/soniq2fa/totp.key
+```
+
+New secrets are then stored encrypted. Existing ones keep working as they are; to encrypt them too, replace each value
+with the output of `java -cp soniq2fa.jar pl.soniqsoft.soniq2fa.TwoFa seal <key file> <zimbraId> -` (secret on standard
+input) through LDAP. Add the key to your backups.
+
+Recovery addresses confirmed with 1.0.0 have to be confirmed once more on the self-service page. Until
 then password recovery and codes by e-mail are off for those accounts. If you'd rather not ask users, check the
 addresses and add `recovery:<address in lower case>` to `zimbraTwoFactorAuthTrustedDevices` of each account (it is
 immutable, so through LDAP, as in *Command line*).
@@ -594,7 +621,7 @@ immutable, so through LDAP, as in *Command line*).
 
 Rebuild the jar against the new mailbox jars, reinstall, and check `Initialized extension soniq2fa` in
 `mailbox.log`. If the extension fails to load, users of a domain with `custom:soniq2fa` cannot sign in
-at all — the failure is closed, not open. Check also that no "unknown Jetty version" error follows; without it,
+at all: the failure is closed, not open. Check also that no "unknown Jetty version" error follows; without it,
 SMTP AUTH of enrolled users is refused.
 
 Packages that replace files the extension touches, and what restores them:
@@ -611,27 +638,24 @@ After an upgrade: `soniq2fa.login` and `soniq2fa.ext` must be 1, the Settings en
 code dialog must appear on both login pages after the right password. Run `login-inject.sh` by hand if the hook did not.
 
 The login pages send the same `AuthRequest` JSON; a change in how the server answers a login (error codes) shows on
-**both** — test the admin console login too.
+**both**, so test the admin console login too.
 
 ## Limitations
 
 - The login dialog relies on the CE login forms calling `/service/soap/AuthRequest` (webmail) and
   `/service/admin/soap/AuthRequest` (admin console) through `fetch` (carbonio-login-ui 0.9.x–0.11.x and the matching
   carbonio-admin-login-ui).
-- Enforcement covers webmail: a required account that has not set 2FA up yet still signs in to mail programs with
-  the password, until the user sets it up. In webmail the setup window over the mail is shown by the browser; a user
-  who removes it keeps using webmail with the password alone until setting 2FA up. Until then the account has only its
-  password, and whoever knows it can set 2FA up with their own phone first. Require 2FA where it matters and ask users
-  to set it up soon.
+- During the grace period of a required account (see *Who can turn it on, who must*) the password alone still works,
+  and whoever knows it can set 2FA up with their own phone first. Keep the period short where it matters and ask
+  users to set it up soon.
 - Carbonio's built-in password recovery and 2FA exclude each other (its mailed code skips the second factor); the
   extension's own recovery replaces it for enrolled accounts. Its codes are kept in memory, so a mailbox restart voids
   them, and mail goes out through the local MTA with the account itself as the sender.
-- Turning 2FA on sends no notification e-mail.
-- Codes by SMS and e-mail complement the app: an account turns them on after setting up 2FA with the app, and 2FA by SMS
-  alone is not offered. SMS goes through SMSAPI or any gateway with an HTTP API; pending codes are kept in memory (a mailbox restart voids them).
+- Codes by SMS and e-mail complement the app: an account turns them on after setting up 2FA with the app, and 2FA by
+  SMS alone is not offered. SMS goes through SMSAPI or any gateway with an HTTP API. Pending codes are kept in memory,
+  so a mailbox restart voids them.
 - REST access with HTTP basic auth is not available to enrolled users.
 - Single-server installations only (see Requirements).
-- The TOTP secret is not encrypted in LDAP.
 
 ## Translations
 
@@ -669,7 +693,7 @@ musi mieć `zimbraAuthFallbackToLocal FALSE`, a port 7073 ma być dostępny tylk
 Niezależny projekt SoniqSoft sp. z o.o., niepowiązany z Zextras S.r.l.; Carbonio i Zextras to znaki towarowe Zextras S.r.l.
 
 Administracja: `https://mail.example.com:6071/service/extension/soniq2fa-admin` po zalogowaniu do konsoli admina
-(tylko administratorzy globalni) — poziom 2FA domen, dostęp i wymuszenie dla kont, reset 2FA, odzyskiwanie hasła
+(tylko administratorzy globalni): poziom 2FA domen, dostęp i wymuszenie dla kont, reset 2FA, odzyskiwanie hasła
 z ostrzeżeniem o osłabieniu 2FA.
 
 Kto może włączyć 2FA, a kto musi: argument mechanizmu domeny (`custom:soniq2fa available` albo
@@ -690,7 +714,11 @@ zmianie telefonu.
   osobom. Pozostali niczego nie widzą.
 - **Dla wszystkich:** domena na *dostępna dla wszystkich*.
 - **Wymuszenie:** *Wymagana: tak* dla konta albo *wymagana dla wszystkich* dla domeny. Przy następnym logowaniu do
-  poczty w przeglądarce użytkownik dostaje okno konfiguracji; do tego czasu programy pocztowe działają na haśle.
+  poczty w przeglądarce użytkownik dostaje okno konfiguracji. Przez okres przejściowy (domyślnie 7 dni,
+  `required.graceDays` w `soniq2fa.properties`) samo hasło działa wszędzie, także w programach pocztowych. Potem serwer
+  je odrzuca, a strona logowania kieruje do konfiguracji 2FA.
+- **Sekrety TOTP** są w LDAP zaszyfrowane kluczem `/opt/zextras/lib/ext/soniq2fa/totp.key`. Klucz trzeba mieć
+  w kopii zapasowej serwera: bez niego konta z 2FA się nie zalogują.
 - **Zgubiony telefon i kody zapasowe:** *Resetuj 2FA*, użytkownik konfiguruje je od nowa.
 - **Zapomniane hasło:** użytkownik z potwierdzonym adresem do odzyskiwania zmienia je sam (kod z maila i kod z
   aplikacji); pozostałym nowe hasło w konsoli admina albo `carbonio prov sp`; 2FA zostaje.
@@ -701,8 +729,6 @@ zmianie telefonu.
   testowy SMS. Kody na adres zapasowy działają bez konfiguracji; kanały włącza użytkownik.
 - **Odzyskiwanie hasła mailem** jest wyłączane przy włączeniu 2FA. Ponowne włączenie dla konta z 2FA wymaga
   potwierdzenia, bo kod z maila loguje bez drugiego składnika; użytkownik widzi wtedy ostrzeżenie.
-
-
 
 ### Instrukcja dla użytkownika
 
@@ -726,13 +752,14 @@ niczego nie zmienia: 2FA działa dopiero po pierwszym poprawnym kodzie.
 ![Kod QR, klucz, hasło i pierwszy kod](docs/page-enroll-pl.png)
 
 **4. Kody zapasowe.** Strona pokazuje jednorazowo 10 kodów. Pobierz albo skopiuj je i przechowuj poza telefonem
-(sejf haseł, wydruk). Zastępują telefon, gdy go nie masz. **Wygeneruj nowe kody** unieważnia poprzednie.
+(sejf haseł, wydruk). Zastępują telefon, gdy go nie masz. **Wygeneruj nowe kody** prosi o hasło do poczty
+i unieważnia poprzednie.
 
 ![Weryfikacja włączona, kody zapasowe](docs/page-on-pl.png)
 
 **5. Hasła urządzeń.** Od teraz Thunderbird, Outlook, Apple Mail, poczta, kalendarz i kontakty w telefonie oraz
 konta kalendarza i kontaktów w macOS potrzebują hasła urządzenia. W **Hasła urządzeń** wpisz nazwę (np.
-*Thunderbird – laptop*), kliknij **Utwórz hasło** i wpisz je w programie zamiast zwykłego hasła. Widać je tylko
+*Thunderbird – laptop*) i hasło do poczty, kliknij **Utwórz hasło** i wpisz je w programie zamiast zwykłego hasła. Widać je tylko
 raz; zgubione urządzenie usuwasz z listy, pozostałe działają dalej.
 
 ![Nowe hasło urządzenia z ustawieniami serwera](docs/page-device-pl.png)
@@ -742,9 +769,9 @@ kliknij **Wyślij kod potwierdzający** i wpisz kod z tego maila. Gdy zapomnisz 
 
 **7. Kody SMS i e-mailem (opcjonalnie).** W sekcji **Kody SMS i e-mailem** wpisz hasło do poczty i numer komórki
 (`+48600111222`, `0048600111222` albo `600111222`), kliknij
-**Wyślij kod SMS-em** i potwierdź numer kodem z wiadomości; albo, przy potwierdzonym adresie do odzyskiwania spoza tego
-serwera poczty, wpisz hasło i kliknij **Wysyłaj kody na adres zapasowy**. Okno logowania zaproponuje wtedy **Wyślij kod SMS-em** / **Wyślij kod e-mailem**. Każdy kod działa raz,
-przez 5 minut. Opcję e-mailową włącz tylko dla adresu, który czytasz wyłącznie Ty.
+**Wyślij kod SMS-em** i potwierdź numer kodem z wiadomości. Przy potwierdzonym adresie do odzyskiwania spoza tego
+serwera poczty możesz też wpisać hasło i kliknąć **Wysyłaj kody na adres zapasowy**. Okno logowania zaproponuje wtedy
+**Wyślij kod SMS-em** / **Wyślij kod e-mailem**. Każdy kod działa raz, przez 5 minut. Opcję e-mailową włącz tylko dla adresu, który czytasz wyłącznie Ty.
 
 ![Kody SMS i e-mailem](docs/page-channels-pl.png)
 
@@ -758,7 +785,7 @@ przy złym haśle jest zwykły komunikat, przy złym kodzie okno pyta ponownie:
 
 **Gdy 2FA jest wymagane.** Przy następnym logowaniu strona otwiera się nad pocztą. Skonfiguruj ją jak w krokach
 3–5; **Przejdź do poczty** odblokowuje się po włączeniu 2FA. Konto z wymuszeniem nie wyłączy 2FA; po zmianie
-telefonu użyj **Skonfiguruj od nowa** — zmienia wpis w aplikacji i kody zapasowe, hasła urządzeń zostają.
+telefonu użyj **Skonfiguruj od nowa**: zmienia wpis w aplikacji i kody zapasowe, hasła urządzeń zostają.
 
 | Pierwsze logowanie | Ustawienia konta z wymuszeniem |
 |---|---|
@@ -767,10 +794,10 @@ telefonu użyj **Skonfiguruj od nowa** — zmienia wpis w aplikacji i kody zapas
 Czerwona uwaga u góry oznacza, że na koncie włączono odzyskiwanie hasła mailem: osłabia ono 2FA. Jeśli to nie było
 zamierzone, poproś administratora o wyłączenie.
 
-**Gdy coś pójdzie inaczej**
+**Typowe problemy**
 
 - Komunikat *Auth credentials have expired* na ekranie logowania: odśwież stronę i zaloguj się ponownie.
-- Program pocztowy wciąż pyta o hasło: potrzebuje hasła urządzenia, a zwykłe hasło do poczty tu odpada.
+- Program pocztowy wciąż pyta o hasło: potrzebuje hasła urządzenia; zwykłe hasło do poczty jest tu odrzucane.
 - Zgubiony telefon: zaloguj się kodem zapasowym, wyłącz 2FA i włącz je z nowym telefonem (przy wymuszeniu:
   *Skonfiguruj od nowa*). Hasła zgubionych urządzeń usuń z listy. Zgubiony telefon i kody zapasowe: administrator
   zeruje 2FA.

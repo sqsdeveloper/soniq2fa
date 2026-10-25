@@ -250,7 +250,8 @@
   $("email-off").onclick = function () { emailCodes(false); };
 
   $("create").onclick = function () {
-    call("create", { label: $("label").value }).then(function (r) {
+    call("create", { label: $("label").value, password: $("device-password").value }).then(function (r) {
+      $("device-password").value = "";
       $("new-label").textContent = r.label;
       $("new-pw").textContent = r.password;
       $("cfg-user").textContent = account;
@@ -261,7 +262,7 @@
         show("new-password", true);
         message(t("msg.created", { label: r.label }), true, "devices");
       });
-    }).catch(fail("devices", $("label")));
+    }).catch(function (e) { fail("devices", e.message === "invalid_password" ? $("device-password") : $("label"))(e); });
   };
 
   $("copy").onclick = function () { copy($("new-pw").textContent, $("copy")); };
@@ -278,20 +279,22 @@
 
   $("codes-new").onclick = function () {
     if (!confirm(t("confirm.newCodes"))) return;
-    call("codes").then(function (st) {
+    call("codes", { password: $("codes-password").value }).then(function (st) {
+      $("codes-password").value = "";
       render(st);
       message(t("msg.newCodes"), true, "backup");
-    }).catch(fail("backup"));
+    }).catch(fail("backup", $("codes-password")));
   };
 
   $("disable").onclick = function () {
     if (!confirm(t("confirm.disable"))) return;
-    call("disable").then(function (st) {
+    call("disable", { password: $("disable-password").value }).then(function (st) {
+      $("disable-password").value = "";
       show("new-password", false);
       show("codes-box", false);
       render(st);
       message(t("msg.disabled"), true, "off");
-    }).catch(fail("disable-box"));
+    }).catch(fail("disable-box", $("disable-password")));
   };
 
   fetch("?op=i18n", { credentials: "same-origin" })
